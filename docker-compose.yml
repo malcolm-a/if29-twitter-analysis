@@ -1,0 +1,16 @@
+services:
+  db:
+    image: postgres:17
+    container_name: if29-postgres
+    restart: always
+    environment:
+      POSTGRES_DB: tweet_db
+      POSTGRES_USER: admin_user
+      POSTGRES_PASSWORD: ${ADMIN_PASSWORD}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./src/etl/extract/init.sql:/docker-entrypoint-initdb.d/init.sql
+volumes:
+  pgdata:
