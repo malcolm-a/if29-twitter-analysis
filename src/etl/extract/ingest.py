@@ -20,6 +20,16 @@ BATCH_SIZE = 2000
 TRACKER_FILE = "processed_files.log"
 
 def parse_twitter_date(date_str):
+    """
+    Parses a Twitter-formatted date string into a datetime object.
+    
+    Args:
+        date_str (str): The date string to parse.
+
+    Returns:
+        datetime: The parsed datetime object, or None if parsing fails.
+    """
+    
     if not date_str: return None
     try:
         # Standard Twitter format: "Sun Jun 17 17:00:31 +0000 2018"
@@ -28,19 +38,32 @@ def parse_twitter_date(date_str):
         return None
 
 def get_processed_files():
-    """Reads the log of already completed files."""
+    """
+    Reads the log of already completed files.
+
+    Returns:
+        set: A set of filenames that have already been processed.
+    """
     if os.path.exists(TRACKER_FILE):
         with open(TRACKER_FILE, 'r') as f:
             return set(f.read().splitlines())
     return set()
 
 def mark_file_processed(filename):
-    """Saves the filename so it is never processed again."""
+    """
+    Saves the filename so it is never processed again.
+
+    Args:
+        filename (str): The name of the file to mark as processed.
+    """
     with open(TRACKER_FILE, 'a') as f:
         f.write(f"{filename}\n")
 
 def upload_tweets():
-    print("🔌 Connecting to database...")
+    """
+    Uploads tweet data from JSON files to the database.
+    """
+    print("Connecting to database...")
     try:
         conn = psycopg2.connect(**DB_CONFIG)
         cur = conn.cursor()
@@ -64,16 +87,16 @@ def upload_tweets():
     all_files = sorted([f for f in os.listdir(DATA_DIR) if f.endswith(".json")])
     files_to_process = [f for f in all_files if f not in processed_files]
 
-    print(f"📂 Found {len(all_files)} total files.")
-    print(f"⏭️  Skipping {len(processed_files)} already processed files.")
-    print(f"🚀 {len(files_to_process)} files remaining for ingestion.\n")
+    print(f"Found {len(all_files)} total files.")
+    print(f"Skipping {len(processed_files)} already processed files.")
+    print(f"{len(files_to_process)} files remaining for ingestion.\n")
 
     batch = []
 
     # Process only the files we haven't finished yet
     for idx, filename in enumerate(files_to_process, 1):
         file_path = os.path.join(DATA_DIR, filename)
-        print(f"⏳ [{idx}/{len(files_to_process)}] Reading {filename}...", end="", flush=True)
+        print(f"[{idx}/{len(files_to_process)}] Reading {filename}...", end="", flush=True)
 
         error_count = 0
 
@@ -119,7 +142,7 @@ def upload_tweets():
                 conn.commit()
             except psycopg2.Error as db_err:
                 conn.rollback()
-                print(f"\n⚠️  DB error on final flush for {filename}: {db_err}", flush=True)
+                print(f"\nDB error on final flush for {filename}: {db_err}", flush=True)
                 error_count += 1
             batch = []
 
@@ -131,12 +154,12 @@ def upload_tweets():
         total_db_count = cur.fetchone()[0]
 
         # 3. Print the update
-        err_msg = f" | ⚠️ {error_count} bad lines" if error_count > 0 else ""
-        print(f" ✅ Done! Total in DB: {total_db_count:,}{err_msg}")
+        err_msg = f" | {error_count} bad lines" if error_count > 0 else ""
+        print(f" Done! Total in DB: {total_db_count:,}{err_msg}")
 
     cur.close()
     conn.close()
-    print("\n🎉 ALL FILES IMPORTED SUCCESSFULLY!")
+    print("\nAll files imported successfully.")
 
 if __name__ == "__main__":
     upload_tweets()
