@@ -16,3 +16,6 @@ wheels/
 data/raw/
 data/misc/
 processed_files.log
+
+# macOS
+.DS_Store
