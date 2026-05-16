@@ -23,7 +23,6 @@ import logging
 import os
 from datetime import datetime
 
-import psycopg2
 from psycopg2.extras import RealDictCursor
 
 from src.db import get_db_connection
