@@ -36,9 +36,7 @@ CHECKPOINT_FILE = os.path.join(
 )
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 def _run_init_sql(conn: psycopg2.extensions.connection) -> None:
@@ -88,7 +86,6 @@ def load_users() -> None:
         raise
 
 
-
 def _extract_or_load_cache(conn) -> list[dict]:
     """Extract users from tweets, or load from a pickle checkpoint.
 
@@ -99,18 +96,13 @@ def _extract_or_load_cache(conn) -> list[dict]:
         List of user dicts.
     """
     if os.path.exists(CHECKPOINT_FILE):
-        logger.info(
-            "Found checkpoint %s - loading users from cache ...", CHECKPOINT_FILE
-        )
+        logger.info("Found checkpoint %s - loading users from cache ...", CHECKPOINT_FILE)
         with open(CHECKPOINT_FILE, "rb") as f:
             users = pickle.load(f)
         logger.info("Loaded %d users from checkpoint.", len(users))
         return users
 
-    logger.info(
-        "Extracting users from tweets table "
-        "(this may take a while on large datasets) ..."
-    )
+    logger.info("Extracting users from tweets table (this may take a while on large datasets) ...")
     users = extract_users(conn)
     logger.info("Extracted %d unique users.", len(users))
 
@@ -155,9 +147,7 @@ def _upsert_users(conn, users: list[dict]) -> None:
         "first_seen_at",
         "last_seen_at",
     ]
-    update_set = ", ".join(
-        f"{col} = EXCLUDED.{col}" for col in columns if col != "user_id"
-    )
+    update_set = ", ".join(f"{col} = EXCLUDED.{col}" for col in columns if col != "user_id")
 
     upsert_sql = f"""
         INSERT INTO users ({", ".join(columns)})
@@ -171,9 +161,7 @@ def _upsert_users(conn, users: list[dict]) -> None:
         chunk = users[offset : offset + COMMIT_CHUNK_SIZE]
         rows = []
         for u in chunk:
-            row = tuple(
-                json.dumps(u.get(c)) if c == "raw_user" else u.get(c) for c in columns
-            )
+            row = tuple(json.dumps(u.get(c)) if c == "raw_user" else u.get(c) for c in columns)
             rows.append(row)
 
         with conn.cursor() as cur:

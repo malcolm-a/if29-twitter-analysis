@@ -73,9 +73,7 @@ CSV_COLUMNS = [
 ]
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s"
-)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 
 
 def _ensure_output_dir() -> None:
@@ -275,9 +273,7 @@ def _assemble_rows(
 
         # --- sample tweets (separated so they stay in one cell) ---
         tweets = tweets_map.get(uid, [])
-        sample_tweets = " ||| ".join(
-            t.replace("\n", " ").replace("\r", "") for t in tweets if t
-        )
+        sample_tweets = " ||| ".join(t.replace("\n", " ").replace("\r", "") for t in tweets if t)
 
         row = {
             "user_id": uid,

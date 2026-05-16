@@ -13,23 +13,26 @@ DATA_DIR = os.getenv("DATA_DIR")
 BATCH_SIZE = 2000
 TRACKER_FILE = "processed_files.log"
 
+
 def parse_twitter_date(date_str):
     """
     Parses a Twitter-formatted date string into a datetime object.
-    
+
     Args:
         date_str (str): The date string to parse.
 
     Returns:
         datetime: The parsed datetime object, or None if parsing fails.
     """
-    
-    if not date_str: return None
+
+    if not date_str:
+        return None
     try:
         # Standard Twitter format: "Sun Jun 17 17:00:31 +0000 2018"
-        return datetime.strptime(date_str, '%a %b %d %H:%M:%S +0000 %Y')
+        return datetime.strptime(date_str, "%a %b %d %H:%M:%S +0000 %Y")
     except Exception:
         return None
+
 
 def get_processed_files():
     """
@@ -39,9 +42,10 @@ def get_processed_files():
         set: A set of filenames that have already been processed.
     """
     if os.path.exists(TRACKER_FILE):
-        with open(TRACKER_FILE, 'r') as f:
+        with open(TRACKER_FILE, "r") as f:
             return set(f.read().splitlines())
     return set()
+
 
 def mark_file_processed(filename):
     """
@@ -50,8 +54,9 @@ def mark_file_processed(filename):
     Args:
         filename (str): The name of the file to mark as processed.
     """
-    with open(TRACKER_FILE, 'a') as f:
+    with open(TRACKER_FILE, "a") as f:
         f.write(f"{filename}\n")
+
 
 def upload_tweets():
     """
@@ -72,21 +77,15 @@ def upload_tweets():
                 );
             """)
             conn.commit()
-            
+
             # Find out what we actually need to do
             processed_files = get_processed_files()
-            all_files = sorted(
-                [f for f in os.listdir(DATA_DIR) if f.endswith(".json")]
-            )
-            files_to_process = [
-                f for f in all_files if f not in processed_files
-            ]
+            all_files = sorted([f for f in os.listdir(DATA_DIR) if f.endswith(".json")])
+            files_to_process = [f for f in all_files if f not in processed_files]
 
             print(f"Found {len(all_files)} total files.")
             print(f"Skipping {len(processed_files)} already processed files.")
-            print(
-                f"{len(files_to_process)} files remaining for ingestion.\n"
-            )
+            print(f"{len(files_to_process)} files remaining for ingestion.\n")
 
             batch = []
             # Process only the files we haven't finished yet
@@ -111,14 +110,10 @@ def upload_tweets():
 
                             t_id = data.get("id")
                             t_text = data.get("full_text") or data.get("text")
-                            t_date = parse_twitter_date(
-                                data.get("created_at")
-                            )
+                            t_date = parse_twitter_date(data.get("created_at"))
 
                             if t_id:
-                                batch.append(
-                                    (t_id, t_date, t_text, json.dumps(data))
-                                )
+                                batch.append((t_id, t_date, t_text, json.dumps(data)))
 
                             if len(batch) >= BATCH_SIZE:
                                 execute_values(
@@ -167,9 +162,7 @@ def upload_tweets():
                 cur.execute("SELECT count(*) FROM tweets;")
                 total_db_count = cur.fetchone()[0]
 
-                err_msg = (
-                    f" | {error_count} bad lines" if error_count > 0 else ""
-                )
+                err_msg = f" | {error_count} bad lines" if error_count > 0 else ""
                 print(f" Done! Total in DB: {total_db_count:,}{err_msg}")
 
             cur.close()
