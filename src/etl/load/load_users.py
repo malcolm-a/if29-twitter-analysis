@@ -70,14 +70,15 @@ def load_users() -> None:
         with get_db_connection() as conn:
             _run_init_sql(conn)
 
-        users = _extract_or_load_cache(conn)
-        if not users:
-            logger.warning("No users extracted - is the tweets table empty?")
-            return
+            users = _extract_or_load_cache(conn)
+            if not users:
+                logger.warning("No users extracted - is the tweets table empty?")
+                return
 
-        _upsert_users(conn, users)
-        logger.info("Upserted %d users into users table.", len(users))
+            _upsert_users(conn, users)
+            logger.info("Upserted %d users into users table.", len(users))
 
+        # Connection closed here — clean up checkpoint on success
         if os.path.exists(CHECKPOINT_FILE):
             os.remove(CHECKPOINT_FILE)
             logger.info("Checkpoint file removed (upsert succeeded).")
@@ -85,6 +86,7 @@ def load_users() -> None:
     except Exception:
         logger.exception("load_users failed - changes rolled back.")
         raise
+
 
 
 def _extract_or_load_cache(conn) -> list[dict]:
