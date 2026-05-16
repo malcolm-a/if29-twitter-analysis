@@ -24,18 +24,9 @@ import os
 from datetime import datetime
 
 import psycopg2
-from dotenv import load_dotenv
 from psycopg2.extras import RealDictCursor
 
-load_dotenv()
-
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "database": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASS"),
-    "port": os.getenv("DB_PORT"),
-}
+from src.db import get_db_connection
 
 # ---------------------------------------------------------------------------
 # Configurable constants
@@ -107,9 +98,8 @@ def sample_users() -> str:
     _ensure_output_dir()
 
     logger.info("Connecting to database ...")
-    conn = psycopg2.connect(**DB_CONFIG)
 
-    try:
+    with get_db_connection() as conn:
         # 1. Pick 1 000 users deterministically
         user_ids = _pick_random_users(conn)
         logger.info("Selected %d user IDs for annotation.", len(user_ids))
@@ -132,9 +122,6 @@ def sample_users() -> str:
         logger.info("CSV written to %s", output_path)
 
         return output_path
-
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------

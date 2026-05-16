@@ -15,22 +15,12 @@ import pickle
 import sys
 
 import psycopg2
-from dotenv import load_dotenv
 from psycopg2.extras import execute_values
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", ".."))
 
+from src.db import get_db_connection
 from src.etl.transform.extract_users import extract_users
-
-load_dotenv()
-
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "database": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASS"),
-    "port": os.getenv("DB_PORT"),
-}
 
 UPSERT_BATCH_SIZE = 1000
 COMMIT_CHUNK_SIZE = 50_000
@@ -75,10 +65,10 @@ def _run_init_sql(conn: psycopg2.extensions.connection) -> None:
 def load_users() -> None:
     """Full pipeline: init schema -> extract users -> upsert into users table."""
     logger.info("Connecting to database ...")
-    conn = psycopg2.connect(**DB_CONFIG)
 
     try:
-        _run_init_sql(conn)
+        with get_db_connection() as conn:
+            _run_init_sql(conn)
 
         users = _extract_or_load_cache(conn)
         if not users:
@@ -93,11 +83,8 @@ def load_users() -> None:
             logger.info("Checkpoint file removed (upsert succeeded).")
 
     except Exception:
-        conn.rollback()
         logger.exception("load_users failed - changes rolled back.")
         raise
-    finally:
-        conn.close()
 
 
 def _extract_or_load_cache(conn) -> list[dict]:

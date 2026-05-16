@@ -4,17 +4,11 @@ import psycopg2
 from psycopg2.extras import execute_values
 from datetime import datetime
 from dotenv import load_dotenv
+from src.db import get_db_connection
 
 # Load variables from .env
 load_dotenv()
 
-DB_CONFIG = {
-    "host": os.getenv("DB_HOST"),
-    "database": os.getenv("DB_NAME"),
-    "user": os.getenv("DB_USER"),
-    "password": os.getenv("DB_PASS"),
-    "port": os.getenv("DB_PORT")
-}
 DATA_DIR = os.getenv("DATA_DIR")
 BATCH_SIZE = 2000
 TRACKER_FILE = "processed_files.log"
@@ -65,101 +59,126 @@ def upload_tweets():
     """
     print("Connecting to database...")
     try:
-        conn = psycopg2.connect(**DB_CONFIG)
-        cur = conn.cursor()
-    except Exception as e:
-        print(f"❌ Database connection failed: {e}")
-        return
+        with get_db_connection() as conn:
+            cur = conn.cursor()
 
-    # Initialize Table
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS tweets (
-            id BIGINT PRIMARY KEY,
-            created_at TIMESTAMP,
-            tweet_text TEXT,
-            raw_data JSONB
-        );
-    """)
-    conn.commit()
+            # Initialize Table
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS tweets (
+                    id BIGINT PRIMARY KEY,
+                    created_at TIMESTAMP,
+                    tweet_text TEXT,
+                    raw_data JSONB
+                );
+            """)
+            conn.commit()
+            
+            # Find out what we actually need to do
+            processed_files = get_processed_files()
+            all_files = sorted(
+                [f for f in os.listdir(DATA_DIR) if f.endswith(".json")]
+            )
+            files_to_process = [
+                f for f in all_files if f not in processed_files
+            ]
 
-    # Find out what we actually need to do
-    processed_files = get_processed_files()
-    all_files = sorted([f for f in os.listdir(DATA_DIR) if f.endswith(".json")])
-    files_to_process = [f for f in all_files if f not in processed_files]
+            print(f"Found {len(all_files)} total files.")
+            print(f"Skipping {len(processed_files)} already processed files.")
+            print(
+                f"{len(files_to_process)} files remaining for ingestion.\n"
+            )
 
-    print(f"Found {len(all_files)} total files.")
-    print(f"Skipping {len(processed_files)} already processed files.")
-    print(f"{len(files_to_process)} files remaining for ingestion.\n")
+            batch = []
+            # Process only the files we haven't finished yet
+            for idx, filename in enumerate(files_to_process, 1):
+                file_path = os.path.join(DATA_DIR, filename)
+                print(
+                    f"[{idx}/{len(files_to_process)}] Reading {filename}...",
+                    end="",
+                    flush=True,
+                )
 
-    batch = []
+                error_count = 0
 
-    # Process only the files we haven't finished yet
-    for idx, filename in enumerate(files_to_process, 1):
-        file_path = os.path.join(DATA_DIR, filename)
-        print(f"[{idx}/{len(files_to_process)}] Reading {filename}...", end="", flush=True)
+                with open(file_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line:
+                            continue
 
-        error_count = 0
+                        try:
+                            data = json.loads(line)
 
-        with open(file_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if not line: continue
+                            t_id = data.get("id")
+                            t_text = data.get("full_text") or data.get("text")
+                            t_date = parse_twitter_date(
+                                data.get("created_at")
+                            )
 
-                try:
-                    data = json.loads(line)
+                            if t_id:
+                                batch.append(
+                                    (t_id, t_date, t_text, json.dumps(data))
+                                )
 
-                    t_id = data.get('id')
-                    t_text = data.get('full_text') or data.get('text')
-                    t_date = parse_twitter_date(data.get('created_at'))
+                            if len(batch) >= BATCH_SIZE:
+                                execute_values(
+                                    cur,
+                                    """
+                                    INSERT INTO tweets (id, created_at, tweet_text, raw_data)
+                                    VALUES %s ON CONFLICT (id) DO NOTHING
+                                    """,
+                                    batch,
+                                )
+                                conn.commit()
+                                batch = []
 
-                    if t_id:
-                        batch.append((t_id, t_date, t_text, json.dumps(data)))
+                        except json.JSONDecodeError:
+                            error_count += 1
+                        except psycopg2.Error:
+                            conn.rollback()
+                            batch = []
+                            error_count += 1
+                        except Exception:
+                            error_count += 1
 
-                    if len(batch) >= BATCH_SIZE:
-                        execute_values(cur, """
+                # Push any leftover tweets at the end of the file
+                if batch:
+                    try:
+                        execute_values(
+                            cur,
+                            """
                             INSERT INTO tweets (id, created_at, tweet_text, raw_data)
                             VALUES %s ON CONFLICT (id) DO NOTHING
-                        """, batch)
+                            """,
+                            batch,
+                        )
                         conn.commit()
-                        batch = []
-
-                except json.JSONDecodeError:
-                    error_count += 1
-                except psycopg2.Error as db_err:
-                    conn.rollback()
+                    except psycopg2.Error as db_err:
+                        conn.rollback()
+                        print(
+                            f"\nDB error on final flush for {filename}: {db_err}",
+                            flush=True,
+                        )
+                        error_count += 1
                     batch = []
-                    error_count += 1
-                except Exception as e:
-                    error_count += 1
 
-        # Push any leftover tweets at the end of the file
-        if batch:
-            try:
-                execute_values(cur, """
-                    INSERT INTO tweets (id, created_at, tweet_text, raw_data)
-                    VALUES %s ON CONFLICT (id) DO NOTHING
-                """, batch)
-                conn.commit()
-            except psycopg2.Error as db_err:
-                conn.rollback()
-                print(f"\nDB error on final flush for {filename}: {db_err}", flush=True)
-                error_count += 1
-            batch = []
+                mark_file_processed(filename)
 
-        # 1. Mark file as done so we never repeat it
-        mark_file_processed(filename)
+                cur.execute("SELECT count(*) FROM tweets;")
+                total_db_count = cur.fetchone()[0]
 
-        # 2. Get the real-time count
-        cur.execute("SELECT count(*) FROM tweets;")
-        total_db_count = cur.fetchone()[0]
+                err_msg = (
+                    f" | {error_count} bad lines" if error_count > 0 else ""
+                )
+                print(f" Done! Total in DB: {total_db_count:,}{err_msg}")
 
-        # 3. Print the update
-        err_msg = f" | {error_count} bad lines" if error_count > 0 else ""
-        print(f" Done! Total in DB: {total_db_count:,}{err_msg}")
+            cur.close()
+            print("\nAll files imported successfully.")
 
-    cur.close()
-    conn.close()
-    print("\nAll files imported successfully.")
+    except Exception as e:
+        print(f"Database connection failed: {e}")
+        return
+
 
 if __name__ == "__main__":
     upload_tweets()
