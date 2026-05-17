@@ -343,15 +343,62 @@ Le déséquilibre éventuel entre les deux classes (si l'une est largement major
 
 = Méthodologie de modélisation
 
-#text(
-  fill: red,
-)[SECTION À COMPLÉTER APRÈS AVOIR DÉFINI LES FEATURES ET ENTRAÎNÉ LES MODÈLES. Structure suggérée ci-dessous.]
-
 == Feature engineering
 
-#text(
-  fill: red,
-)[COMPLÉTER : listez les features utilisées (user-based, activity-based, content-based) en justifiant chaque choix par une référence bibliographique. Mentionnez la normalisation (StandardScaler, MinMax) et la réduction de dimension si utilisée (PCA, t-SNE).]
+Nous avons commencé par calculer toutes les métriques utiles dans une `materialized view` en base de données, notamment celles repérées pour l'annotation : ratio friends/followers, âge du compte, fréquences de publication, agressivité SPOT, etc. À celles-ci s'ajoute une analyse des sources : le payload de l'API twitter donne un champ `source` qui est un lien html (tag `<a>`) duquel on peut extraire un nom. Nous avons extrait cette information avec la requête suivante :
+
+```sql
+SELECT 
+    COALESCE(
+        NULLIF(trim(substring(raw_data->>'source' from '<a[^>]*>([^<<]*)</a>')), ''),
+        raw_data->>'source'
+    ) AS tweet_source,
+    COUNT(*) AS tweet_count
+FROM 
+    tweets
+GROUP BY 
+    1
+ORDER BY 
+    2 DESC
+;
+```
+À partir de là, on obtient une liste de plusieurs centaines de valeurs :
+
+```
+tweet_source                    |tweet_count|
+--------------------------------+-----------+
+Twitter for Android             |    1879304|
+Twitter for iPhone              |    1660451|
+Twitter Web Client              |     460123|
+Twitter Lite                    |     147823|
+TweetDeck                       |      72768|
+Twitter for iPad                |      60325|
+Mobile Web (M2)                 |      18292|
+IFTTT                           |      13063|
+Facebook                        |      12681|
+Paper.li                        |      12206|
+Tweetbot for iΟS                |      10523|
+Hootsuite Inc.                  |       9002|
+FCBarcelonaBot                  |       6857|
+...
+```
+Nous avons donné cette liste à un LLM (Moonshot AI Kimi K2.6) afin qu'il identifie et cherche les sources connues comme étant des outils communs d'automatisation ou des bots. Cette approche est approximative : les bots plus sophsitiqués peuvent parfois tenter de maquiller leur origine. En revanche, les bots étant constants dans leurs sources, nous avons également utilisé la variété des sources comme feature pour essayer de déterminer les bots, car un humain, même s'il utilise principalement une source, a souvent l'occasion d'en utiliser d'autres s'il a plusieurs appareils (en général : Client Web, iOS, Android, iPadOS…)
+
+
+Afin d'entraîner nos modèles, nous avons structuré nos attributs (*features*) en trois grandes catégories, en nous inspirant de la littérature existante sur la détection d'anomalies sur les réseaux sociaux. 
+
+- *Caractéristiques liées au profil (User-based) :* Nous prenons en compte la présence d'éléments descriptifs (`has_description`, `has_url`, `has_location`, `description_length`), la structure du pseudonyme (`screen_name_length`, `screen_name_has_digits`), ainsi que des mesures d'influence et de socialisation telles que la réputation (ratio $"followers" / ("followers" + "friends" + 1)$) ou le ciblage des listes (`listed_per_follower`). Le ratio *followers/friends* est une métrique classique pour identifier les bots qui suivent massivement d'autres comptes sans être suivis en retour (Chu et al., 2012). L'ancienneté du compte (`account_age_days`) est également pertinente, les vagues de création massive de faux comptes étant fréquentes.
+  
+- *Caractéristiques d'activité (Activity-based) :* L'intensité de publication est évaluée via le volume total de tweets (`tweet_count`), la fréquence historique depuis la création (`tweet_frequency`), ou encore la densité d'activité calculée pendant la période de collecte (`tweets_per_day_in_dataset`). Ces mesures traduisent le comportement intensif caractéristique de nombreux comptes automatisés. L'intérêt pour les interactions est évalué à travers le taux de favoris donnés (`favourites_per_status`). Le délai depuis le dernier tweet (`days_since_last_tweet`) ou l'étendue de l'observation (`observation_span_days`) donnent une mesure de l'assiduité du compte.
+
+- *Caractéristiques de contenu (Content-based) :* Ces attributs caractérisent la nature des messages émis. Nous calculons la fréquence d'utilisation d'URLs, de hashtags, et de mentions (`urls_per_tweet`, `hashtags_per_tweet`, `mentions_per_tweet`), ces derniers étant souvent saturés par les bots de spam à visée promotionnelle. Enfin, l'orientation vers le relais d'information (au lieu de la production originale) est mesurée par la proportion de retweets (`retweet_rate`) et le taux de réponses (`reply_rate`). Nous y ajoutons bien sûr le taux de sources suspectes ou automatisées (`bot_source_ratio`) et la diversité des outils employés (`unique_sources`) évoqués plus haut.
+
+#link("t-https://github.com/malcolm-a/if29-twitter-analysis/blob/main/src/etl/transform/user_features.sql",
+"Le script SQL complet disponible sur GitHub."
+)
+
+#text(fill: red)[*Note relative à la préparation des données :* La formalisation définitive des transformations temporelles (par exemple l’application systématique d’un log) et des étapes de normalisation (telles que le *StandardScaler* pour nos algorithmes sensibles aux distances) ainsi que d'une éventuelle réduction de dimension (*PCA*) sera choisie ultérieurement lors de l'implémentation de la modélisation à l'issue de notre analyse exploratoire approfondie.]
+
 
 == Modèle supervisé
 
