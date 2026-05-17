@@ -10,7 +10,7 @@ Reproducibility:
     version.
 
 Usage:
-    python -m src.ml.sample_users
+    python -m src.ml.supervised.sample_users
 
 Output:
     ``data/processed/labeling_sample.csv``
@@ -31,9 +31,9 @@ from src.db import get_db_connection
 # Configurable constants
 # ---------------------------------------------------------------------------
 SAMPLE_SIZE = 1000
-RANDOM_SEED = "if29-bot-detection-2025"  # change to get a different sample
+RANDOM_SEED = "if29"  # change to get a different sample
 TWEETS_PER_USER = 5  # how many recent tweets to include
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data", "processed")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "..", "data", "processed")
 OUTPUT_FILE = "labeling_sample.csv"
 
 # ---------------------------------------------------------------------------
@@ -319,7 +319,7 @@ def _write_csv(path: str, rows: list[dict]) -> None:
         rows: List of dicts with keys matching ``CSV_COLUMNS``.
     """
     with open(path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore")
+        writer = csv.DictWriter(f, fieldnames=CSV_COLUMNS, extrasaction="ignore", delimiter=";")
         writer.writeheader()
         writer.writerows(rows)
 
