@@ -75,6 +75,7 @@ def get_labeled_features(csv_path: str) -> pl.DataFrame:
     labels = pl.read_csv(csv_path, separator=";")
     labels = (
         labels.select(["user_id", "label"])
+        .with_columns(pl.col("label").cast(pl.Utf8))
         .filter(pl.col("label").is_in(["0", "1", "0,0"]))
         .with_columns(pl.col("label").replace({"0,0": "0"}).cast(pl.Int8))
     )
@@ -88,5 +89,5 @@ def get_labeled_features(csv_path: str) -> pl.DataFrame:
 if __name__ == "__main__":
     # test rapide
     # print("Nombre total d'utilisateurs avec features :", len(get_user_features()))
-    ensure_user_features(force=True)
-    print("Done")
+    # ensure_user_features(force=True)
+    # print("Done")
