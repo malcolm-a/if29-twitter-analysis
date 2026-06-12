@@ -90,4 +90,4 @@ if __name__ == "__main__":
     # test rapide
     # print("Nombre total d'utilisateurs avec features :", len(get_user_features()))
     # ensure_user_features(force=True)
-    # print("Done")
+    print("Done")
