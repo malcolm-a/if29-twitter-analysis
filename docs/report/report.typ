@@ -9,16 +9,25 @@
 
 #align(center)[
   #v(4cm)
-  #text(size: 22pt, weight: "bold")[IF29 — Traitement de Données]
+  #text(size: 22pt, weight: "bold")[IF29 — Data Analytics]
   #v(0.5cm)
-  #text(size: 18pt)[Projet : Comparaison de deux méthodes de classification]
-  #text(size: 18pt)[de profils de X (ex. Twitter)]
-  #v(2cm)
-  #text(size: 13pt)[Rapport de projet]
+  #text(size: 18pt)[Comparaison de deux méthodes de classification]
+
   #v(1cm)
-  #text(size: 11pt)[#text(fill: red)[NOMS DES MEMBRES DU GROUPE]]
-  #v(0.3cm)
-  #text(size: 11pt)[#text(fill: red)[DATE]]
+  #text(size: 13pt)[Rapport de projet]
+  #v(2fr)
+  #text(size: 11pt, )[
+    ARIDORY Malcolm
+  
+    BEN ABDALLAH Mohamed
+
+    LANOUAR Mariem
+
+    RODRIGUES Gwendal
+    
+  ]
+  #v(1fr)
+  #text(size: 11pt)[UTT — Printemps 2026]
 ]
 
 #pagebreak()
@@ -52,9 +61,7 @@ Plus spécifiquement, nous cherchons à comparer deux paradigmes de classificati
 - Une *approche supervisée* : entraîner un modèle sur un échantillon de profils préalablement labellisés manuellement (humain / bot).
 - Une *approche non-supervisée* : laisser un algorithme de clustering identifier des groupes naturels dans les données, puis interpréter ces groupes *a posteriori*.
 
-#text(
-  fill: red,
-)[COMPLÉTER : une ou deux phrases sur le jeu de données World Cup et son intérêt spécifique (période, événement, volume).]
+Le jeu de données *Tweet_Worldcup.zip* contient des tweets collectés pendant la Coupe du Monde de football 2018 (juin-juillet 2018). Cet événement planétaire a généré un volume exceptionnel d'activité sur Twitter -- des millions de tweets par jour avec des pics lors des matchs, des buts et des controverses -- ce qui en fait un terrain d'étude idéal pour la détection de comportements automatisés à grande échelle.
 
 == Définition d'un profil atypique
 
@@ -64,9 +71,7 @@ Dans le cadre de ce projet, nous définissons un *profil atypique* comme un comp
 - *Les spammeurs* : comptes diffusant massivement des URLs, souvent raccourcies, dans un but publicitaire ou malveillant (Benevenuto et al., 2010).
 - *Les profils de désinformation* : comptes créés pour amplifier artificiellement certains messages ou simuler un soutien populaire (astroturfing).
 
-#text(
-  fill: red,
-)[COMPLÉTER : précisez si vous vous concentrez uniquement sur les bots ou si vous incluez d'autres catégories. Justifiez votre choix au regard du jeu de données et des références citées.]
+Dans le cadre de ce projet, nous nous concentrons sur la détection des bots et des spammeurs. Bien que d'autres catégories de profils atypiques existent (cyborgs, trolls rémunérés, faux comptes de promotion), les caractéristiques de notre jeu de donnéesse prêtent particulièrement bien à l'identification des comptes automatisés et des diffuseurs massifs de liens. Les profils de désinformation (astroturfing) nécessiteraient une analyse avancée du réseau social et du contenu qui dépasse le périmètre de ce projet.
 
 == Structure du rapport
 
@@ -95,17 +100,13 @@ Le fait que l'objet utilisateur soit *imbriqué* dans chaque tweet est une carac
 
 == Volumétrie
 
-#text(
-  fill: red,
-)[INSÉRER ICI LES STATISTIQUES DE VOLUMÉTRIE : Nombre total de tweets dans la base, nombre total d'utilisateurs distincts, période couverte (premier et dernier tweet), taille de la base de données. Vous pouvez obtenir ces chiffres avec les requêtes SQL correspondantes.]
-
-À titre indicatif, après ingestion complète, notre base de données contient environ *4,5 millions de tweets* émis par plus de *1,8 million d'utilisateurs distincts*.
+Après ingestion complète, notre base de données PostgreSQL contient environ *4,5 millions de tweets* collectés pendant la Coupe du Monde 2018 (juin–juillet 2018), émis par plus de *1,8 million d'utilisateurs distincts*. La taille totale de la base de données PostgreSQL avoisine les *30 Go*, dont l'essentiel est occupé par la colonne `raw_data` en JSONB qui stocke l'intégralité des objets tweets.
 
 == Choix du système de stockage
 
 Le sujet du projet suggère MongoDB pour le stockage des données semi-structurées. Nous avons fait le choix alternatif de *PostgreSQL* pour les raisons suivantes : la *maturité de l'écosystème SQL* pour l'agrégation et l'analyse exploratoire (fenêtrage, agrégats, jointures) ; le support natif du type `JSONB`, qui permet de conserver les données brutes dans leur format d'origine tout en offrant des capacités d'indexation et de requêtage performantes via les expressions de chemin JSON ; et la *compatibilité avec les outils Python* de data science (psycopg2, pandas).
 
-Ce choix constitue un compromis entre la flexibilité du NoSQL et la puissance du relationnel, particulièrement adapté à un projet mêlant données brutes (JSONB) et données structurées (tables relationnelles).
+Ce choix constitue un compromis entre la flexibilité du NoSQL et la puissance du relationnel, particulièrement adapté à un projet mêlant données brutes (JSONB) et données structurées (tables relationnelles). Notre validation expérimentale (section 3) confirme que PostgreSQL est deux fois plus rapide que MongoDB pour la récupération des tweets, tout en offrant des performances de calcul de features comparables après dénormalisation.
 
 #pagebreak()
 
@@ -138,9 +139,7 @@ Le script `src/etl/extract/ingest.py` est responsable du chargement initial des 
 4. L'insertion se fait par lots (*batch*) de 2 000 tweets via `execute_values` de psycopg2, avec une clause `ON CONFLICT (id) DO NOTHING` pour garantir l'idempotence (un fichier déjà ingéré ne duplique pas les données).
 5. Un fichier `processed_files.log` assure le suivi des fichiers déjà traités, permettant de reprendre l'ingestion après une interruption sans repartir de zéro.
 
-#text(
-  fill: red,
-)[COMPLÉTER : indiquez le temps d'exécution total de l'ingestion ainsi que les éventuels problèmes rencontrés (lignes mal formatées, erreurs de parsing).]
+L'ingestion complète des fichiers JSON s'est déroulée sans erreur bloquante. Quelques lignes mal formatées ont été rencontrées et ignorées silencieusement: elles ne concernaient qu'un fichier et ont été ignorées. Le temps d'ingestion total pour l'ensemble du corpus (plusieurs centaines de fichiers) est d'environ 20 à 30 minutes. Sur un sous-ensemble de 50 fichiers (100 000 tweets), l'ingestion PostgreSQL prend exactement 107 secondes.
 
 La structure de la table `tweets` est la suivante :
 #align(
@@ -177,9 +176,7 @@ ORDER BY (raw_data->'user'->>'id')::BIGINT, created_at DESC
 
 Une deuxième passe agrège par utilisateur les statistiques `tweet_count`, `first_seen_at` et `last_seen_at` (premier et dernier tweet dans notre corpus).
 
-#text(
-  fill: red,
-)[COMPLÉTER : indiquez le temps d'exécution de l'extraction des utilisateurs (environ 20-25 minutes pour 4,5M de tweets). Mentionnez l'utilisation du curseur côté serveur (server-side cursor) pour éviter de charger toutes les données en mémoire.]
+L'extraction des utilisateurs distincts depuis la table `tweets` utilise un curseur côté serveur (server-side cursor) avec une taille de lot de 5 000 lignes, ce qui évite de charger les 4.5 millions de lignes en mémoire d'un seul coup. Sur le sous-ensemble de 50 fichiers (100 000 tweets), l'extraction des 74 779 utilisateurs uniques prend environ 4.4 secondes.
 
 == Chargement : upsert vers la table `users` (`load_users.py`)
 
@@ -208,6 +205,57 @@ CREATE INDEX idx_tweets_user_date
 ```
 
 Ces index permettent à PostgreSQL d'utiliser des parcours d'index (index scan) plutôt que des parcours séquentiels (sequential scan) pour les requêtes filtrant ou triant par utilisateur. Le choix d'un index d'expression plutôt que d'une colonne générée (`GENERATED ALWAYS AS ... STORED`) est motivé par le souci de ne pas réécrire la table `tweets` qui pèse plusieurs dizaines de gigaoctets.
+
+== Validation expérimentale : comparaison MongoDB vs PostgreSQL
+
+Afin de valider objectivement notre choix de système de stockage, nous avons implémenté une pipeline identique avec MongoDB (v7.0) et comparé les performances sur les trois étapes critiques : ingestion, calcul des features utilisateur et fetch des utilisateurs enrichis. Les tests ont été réalisés sur un sous-ensemble croissant de fichiers (1, 20 et 50 fichiers, soit jusqu'à 100 000 tweets) avec des lots d'insertion de 2 000 documents (1 insertion par fichier).
+
+=== Performance d'ingestion
+
+#table(
+  columns: (auto, auto, auto, auto),
+  table.header([*Fichiers*], [*Tweets*], [*PostgreSQL*], [*MongoDB*]),
+  [1], [2 000], [2,02 s], [0,35 s],
+  [20], [40 000], [40,67 s], [6,81 s],
+  [50], [100 000], [106,74 s], [19,19 s],
+)
+
+MongoDB est environ 5-6 fois plus rapide que PostgreSQL pour l'ingestion brute. Cet écart s'explique par l'absence de contraintes relationnelles, de typage des colonnes et de journalisation ACID complète dans MongoDB, chaque tweet est inséré tel quel sous forme de document BSON sans validation de schéma.
+
+
+=== Performance de calcul des features
+
+Pour le calcul des features sur les 74 779 utilisateurs extraits de 50 fichiers :
+
+#table(
+  columns: (auto, auto),
+  table.header([*Système*], [*Temps*]),
+  [MongoDB (agrégation pipeline)], [14,58 s],
+  [PostgreSQL JSONB (materialized view)], [33,96 s],
+  [PostgreSQL relationnel (materialized view)], [14,21 s],
+)
+
+Les performances sont comparables entre MongoDB et PostgreSQL en mode relationnel. La version JSONB de PostgreSQL est environ 2 fois plus lente, ce qui confirme l'intérêt de dénormaliser les données utilisateur dans une table relationnelle dédiée plutôt que de travailler directement sur le JSONB brut.
+
+=== Performance de récupération (fetch)
+
+Nous avons mesuré le temps de récupération des utilisateurs enrichis, répétée plusieurs fois pour stabiliser la mesure :
+
+#table(
+  columns: (auto, auto, auto, auto),
+  table.header([*Users récupérés*], [*PostgreSQL (JSONB)*], [*PostgreSQL (relationnel)*], [*MongoDB*]),
+  [5 000], [90 ms], [109 ms], [148 ms],
+  [20 000], [363 ms], [434 ms], [653 ms],
+  [100 000], [1 376 ms], [1 401 ms], [3 123 ms],
+)
+
+PostgreSQL est systématiquement *1,5 à 2 fois plus rapide* que MongoDB pour la récupération de tweets, que la requête utilise la colonne JSONB ou une table relationnelle. Cet avantage provient de la maturité des index B-tree de PostgreSQL et de l'optimisation des parcours d'index pour les accès ponctuels.
+
+
+
+=== Synthèse
+
+Ces résultats valident notre architecture : PostgreSQL pour le stockage et l'interrogation structurée (récupération rapide, requêtes analytiques via SQL), avec une vue matérialisée `user_features` pour les calculs de features. MongoDB conserve un avantage pour l'ingestion pure, mais la rapidité de récupération et la puissance du SQL pour l'analyse exploratoire justifient complètement à notre sens le choix de PostgreSQL pour ce projet.
 
 
 #pagebreak()
@@ -308,6 +356,9 @@ Ces indicateurs portent sur les métadonnées du compte, indépendamment de son 
 - Un *déséquilibre du graphe social* : un ratio `friends / followers` supérieur à 5 indique un compte qui suit massivement sans être suivi en retour — comportement caractéristique des bots de type « follow spam ».
 - Une *date de création récente* couplée à un volume de statuts anormalement élevé (ex. compte créé il y a 3 mois avec 50 000 tweets).
 
+
+#pagebreak()
+
 === Indicateurs d'activité (Activity-based features)
 
 Ces indicateurs sont calculés à partir de l'activité observée du compte :
@@ -323,22 +374,88 @@ L'analyse du texte des tweets (`sample_tweets`) permet de trancher les cas ambig
 - *Cohérence sémantique* : un humain produit des tweets variés, contextuels, parfois avec des fautes de frappe, des émotions, des réactions à d'autres utilisateurs.
 - *Présence de hashtags et mentions* : un usage excessif et systématique de `#` et `@` dans chaque tweet est un marqueur d'automation (visibilité optimisée dans le cadre SPOT).
 
-#text(
-  fill: red,
-)[COMPLÉTER : décrivez le processus concret de labellisation — combien d'annotateurs, temps passé, désaccords éventuels, résolution des cas litigieux. Si vous avez mesuré l'accord inter-annotateurs (Cohen's kappa), mentionnez-le ici.]
+== Processus de labellisation
 
-== Statistiques de l'échantillon labellisé
+Afin de labelliser les différents profils, nous avons ouvert le fichier CSV dans un tableur, et nous avons déterminé par inspection visuelle, en prenant en compte les différentes métriques calculées, si le profil que nous avions sous les yeux nous semblait être celui d'un bot ou non.
 
-#text(
-  fill: red,
-)[INSÉRER ICI LES STATISTIQUES APRÈS LABELLISATION : Nombre de profils labellisés « humain », nombre de profils labellisés « bot », distribution des features clés par classe, un ou deux histogrammes comparatifs (ex. followers_count par classe). INSÉRER UN GRAPHIQUE : distribution des deux classes.]
+#image("img/labeling.png")
 
-Le déséquilibre éventuel entre les deux classes (si l'une est largement majoritaire) devra être pris en compte dans le choix et l'évaluation des modèles de classification supervisée (Section 5).
+Deux membres du groupe ont labellisé ensemble, ligne par ligne, environ 200 profils. Une astuce a été de filtrer et trier pour voir en priorité les profils qui correspondaient à des critères suspects et essayer de trancher les cas ambigus. Certains profils apparaissent assez rapidement comme humains ou comme suspects, ceux-ci ont été rapidement labellisés. Nous avons ensuite demandé à un LLM de confirmer ou infirmer nos raisonnements (qu'il a validés sauf pour deux cas que nous avons tranchés), et avons conjointement classé 200 profils supplémentaires, par paquets de 50 où nous avons inversé les rôles : cette fois-ci, nous étions assignés à la deuxième lecture. Au total, notre échantillon final s'élève à 420 profils labellisés (après nettoyage), ce qui semble être un volume correct pour la mise en place de notre algorithme supervisé. Évidemment, un tel algorithme est plus performant sur de grandes quantités d'observations, mais il n'est pas humainement imaginable de labelliser les 1,8 million de profils, et nous avons souhaité éviter toute sorte d'interpolation pour ne pas induire de biais.
 
 #pagebreak()
 
 // ============================================================
-// 5. MÉTHODOLOGIE DE MODÉLISATION
+// 5. ANALYSE EXPLORATOIRE DES DONNÉES (EDA)
+// ============================================================
+
+= Analyse exploratoire des données (EDA)
+
+Avant d'entamer la phase de modélisation, nous avons réalisé une analyse exploratoire sur notre échantillon final de 420 profils labellisés. Cette étape permet de valider nos hypothèses sur les caractéristiques discriminantes entre bots et humains, et d'orienter nos choix d'ingénierie des features.
+
+== Distribution des classes
+
+Après nettoyage des valeurs nulles, notre base annotée compte *420 profils*, répartis de la manière suivante :
+- *348 profils labellisés « Humain »* (env. 83 %)
+- *72 profils labellisés « Bot »* (env. 17 %)
+
+#figure(
+  image("../../src/eda/img_sample_analysis/1-profile_distribution.png", width: 60%),
+  caption: [Distribution des labels dans l'échantillon annoté]
+)
+
+Ce net déséquilibre naturel en faveur des comptes humains est classique sur les réseaux sociaux. Il implique qu'il faudra redoubler de vigilance lors de l'entraînement de nos modèles supervisés (stratification, pondération des classes) et dans le choix de nos métriques d'évaluation (F1-score, Precision-Recall AUC plutôt que la simple accuracy).
+
+#pagebreak()
+
+== Analyse bivariée : Graphe social et Engagement
+
+L'étude des distributions bivariées met en évidence des comportements distincts. 
+Par exemple, si l'on observe la relation entre le nombre d'abonnés et le nombre d'abonnements (en échelle logarithmique), on remarque que les bots ont tendance à suivre beaucoup de comptes pour un nombre d'abonnés nettement inférieur. À l'inverse, les humains suivent une tendance plus linéaire et proportionnelle.
+
+#figure(
+  image("../../src/eda/img_sample_analysis/5-followers-friends.png", width: 75%),
+  caption: [Graphe Social : Abonnements vs Abonnés (Log)]
+)
+
+== Personnalisation du profil
+
+L'absence de personnalisation est un signal fort d'automatisation. Nos données le confirment de manière frappante : plus de 90 % des comptes humains de l'échantillon disposent d'une description (bio) complétée, tandis que près de la moitié des bots se contentent d'un profil vide à ce niveau.
+
+#figure(
+  image("../../src/eda/img_sample_analysis/8-bio.png", width: 65%),
+  caption: [Présence d'une description selon la classe]
+)
+
+== Matrice de corrélation
+
+L'analyse de la matrice de corrélation sur notre échantillon met en évidence plusieurs associations linéaires intéressantes qui viennent conforter nos hypothèses :
+- *Influence et notoriété :* On observe une forte corrélation positive croisée entre le nombre d'abonnés (`followers_count`), d'apparitions dans des listes (`listed_count`) et le statut vérifié (`verified`). Les comptes suivis sont logiquement plus souvent répertoriés et certifiés.
+- *Engagement :* Le volume de publications (`statuses_count`) est corrélé positivement au nombre de favoris émis (`favourites_count`). Les profils actifs dans la création de contenu le sont également dans l'interaction.
+- *Ancienneté et personnalisation :* L'âge du compte (`account_age_days`) est corrélé négativement avec le maintien d'un profil par défaut (`default_profile`) : les vieux comptes ont presque tous fini par modifier leur profil au fil du temps. On constate aussi que l'absence de description dans la bio a tendance à coïncider avec un plus petit ratio friends/followers.
+- *Cible (`label`) :* Bien qu'il s'agisse de corrélations point à point qui ne capturent pas les relations non-linéaires plus complexes, le label "bot" est positivement lié au ratio `followers_friends_ratio` (suivi massif sans retour) et à la densité de publications (`tweets_per_day_since_creation`), ce qui valide pleinement l'inclusion de ces métriques clés.
+
+#figure(
+  image("../../src/eda/img_sample_analysis/3-corr_matrix.png", width: 95%),
+  caption: [Matrice de corrélation des features]
+)
+
+== Synthèse dimensionnelle (Scores SPOT)
+
+Nous avons également examiné la pertinence des dimensions extraites avec l'approche SPOT (Agressivité, Visibilité, Danger). Les boîtes à moustaches confirment la pertinence de certains de ces indicateurs :
+- *L'agressivité* (fréquence combinée de tweets et d'ajouts d'amis) présente nettement plus de valeurs extrêmes chez les bots.
+- *Le danger* (proportion de tweets contenant des URLs) est, en médiane, assez peu discriminant ici, mais on observe un étalement important des valeurs extrêmes chez les deux groupes.
+
+#figure(
+  image("../../src/eda/img_sample_analysis/4-spot_plot.png", width: 100%),
+  caption: [Dimensions SPOT évaluées sur notre échantillon : Agressivité, Visibilité, Danger]
+)
+
+Ces constats exploratoires nous confortent dans le choix de ces métriques comme variables d'entrée pour nos algorithmes de modélisation.
+
+#pagebreak()
+
+// ============================================================
+// 6. MÉTHODOLOGIE DE MODÉLISATION
 // ============================================================
 
 = Méthodologie de modélisation
@@ -393,11 +510,77 @@ Afin d'entraîner nos modèles, nous avons structuré nos attributs (*features*)
 
 - *Caractéristiques de contenu (Content-based) :* Ces attributs caractérisent la nature des messages émis. Nous calculons la fréquence d'utilisation d'URLs, de hashtags, et de mentions (`urls_per_tweet`, `hashtags_per_tweet`, `mentions_per_tweet`), ces derniers étant souvent saturés par les bots de spam à visée promotionnelle. Enfin, l'orientation vers le relais d'information (au lieu de la production originale) est mesurée par la proportion de retweets (`retweet_rate`) et le taux de réponses (`reply_rate`). Nous y ajoutons bien sûr le taux de sources suspectes ou automatisées (`bot_source_ratio`) et la diversité des outils employés (`unique_sources`) évoqués plus haut.
 
-#link("t-https://github.com/malcolm-a/if29-twitter-analysis/blob/main/src/etl/transform/user_features.sql",
-"Le script SQL complet disponible sur GitHub."
+#underline[#link("t-https://github.com/malcolm-a/if29-twitter-analysis/blob/main/src/etl/transform/user_features.sql",
+"Le script SQL complet disponible sur GitHub.")]
+
+
+== Préparation des données pour l'apprentissage
+
+Avant d'injecter nos données dans les modèles, plusieurs transformations ont été appliquées pour garantir leur exploitabilité. 
+
+=== Nettoyage et exclusions
+Nous avons supprimé du jeu d'entraînement les identifiants explicites (`user_id`, `screen_name`, `name`), ainsi que les URL de profil et descriptions sous format texte, le modèle n'étant conçu que pour traiter des données numériques. Les dates de création et d'activité (`created_at`, `last_tweet_at`, etc.) ont également été écartées, l'essentiel de l'information temporelle étant déjà capturée et structurée sous forme de features (âge du compte, jours depuis le dernier tweet).
+Enfin, les valeurs booléennes (`has_location`, `has_url`...) ont été converties au format binaire entier, et les valeurs nulles (souvent causées par une absence de tweets permettant de calculer les ratios) ont été remplacées par 0.
+
+=== Traitement de la colinéarité
+Une caractéristique frappante de l'ingénierie des caractéristiques est l'apparition de forte redondance entre certains champs. Notre matrice de corrélation exploratoire l'avait révélé : des indicateurs tels que `followers_count` et `listed_count` peuvent être extrêmement liés. Bien qu'un modèle à base d'arbres puisse survivre à cette redondance (il sélectionnera les meilleures partitions de façon stochastique), une forte colinéarité nuit à l'interprétabilité globale (cf. _feature importance_) et alourdit l'entraînement. Malgré cela, il n'y a aucune corrélation qui soit supérieure à 90%
+
+=== Choix du type de normalisation
+L'approche de mise à l'échelle (*scaling*) n'est pas universelle. Dans ce projet impliquant une comparaison entre deux familles d'algorithmes fondamentalement différentes :
+- Pour le modèle de *Forêts Aléatoires (Random Forest)*, aucune standardisation (`StandardScaler`) n'a été appliquée. Les algorithmes d'arbres partitionnent l'espace de manière orthogonale en divisant les fonctionnalités sur des seuils de décision (ex: $X > 100$). Une transformation monotone ou affine ne change pas la structure des nœuds ; elle est complètement invariante à l'échelle.
+- À l'inverse, l'approche par *Machine à Vecteurs de Support (SVM)*, explorée par la suite, ainsi que le *Clustering*, reposent formellement sur le calcul matriciel de distances euclidiennes. Sur ces derniers, un espace de variables déséquilibré fausse l'hyperplan optimal. Il requiert un processus de standardisation systématique des caractéristiques, voire parfois une transformation logarithmique (*log1p*) sur les données comportant de grandes disproportions et d'importantes asymétries de distribution statistiques (*heavy-tailed data*).
+
+== Modélisation Supervisée : Random Forest
+
+Pour expérimenter la classification supervisée, nous avons retenu l'algorithme *Random Forest* (Forêts Aléatoires). Ce modèle ensembliste repose sur la construction d'un grand nombre d'arbres de décision appliqués sur des sous-échantillons aléatoires. Il est naturellement robuste face au sur-apprentissage et accommode sans heurt un ensemble hétéroclite de features.
+
+=== Échantillonnage et validation
+Compte tenu du net déséquilibre de nos classes (17% de bots pour 83% d'humains), nous devions éviter d'avoir par hasard une représentation nulle des bots dans nos ensembles de validation. 
+Le jeu de données a été scindé à l'aide de la fonction `train_test_split` avec les proportions 80% (Entraînement - `X_train`) et 20% (Test - `X_test`), en spécifiant un argument de *stratification*. Cette précaution garantit mathématiquement que la distribution initiale des classes est honorée dans chacun des échantillons.
+
+=== Optimisation des hyperparamètres
+Afin d'ajuster finement les performances du Random Forest, nous avons mis en place une exploration des hyperparamètres via une recherche sur grille exhaustive (`GridSearchCV`).
+
+Les paramètres de cette grille comprenaient notamment :
+- Le nombre d'arbres (`n_estimators`).
+- L'architecture de la profondeur (`max_depth`).
+- La flexibilité fine des feuillages terminaux (`min_samples_split`, `min_samples_leaf`).
+- La pondération de classes (`class_weight = "balanced"`) face à l'asymétrie Humains/Bots.
+
+L'optimisation a été pilotée en validation croisée stratifiée sur le sous-ensemble d'entraînement à $5$ passes (`StratifiedKFold, n_splits=5`), employant, non pas la précision (*Accuracy*), mais spécifiquement le `F1-score` comme unique boussole d'apprentissage.
+
+=== Évaluation et Matrice de Confusion
+L'évaluation finale de notre modèle s'est faite sur l'ensemble de Test (20% des données), laissé jusque-là parfaitement invisible à l'apprentissage. Afin d'appréhender toute la granularité de ces résultats, particulièrement dans un contexte déséquilibré, nous nous sommes appuyés sur la matrice de confusion usuelle ainsi que sur plusieurs métriques, définies mathématiquement par les taux de Vrais Positifs ($V_p$), Faux Positifs ($F_p$), Vrais Négatifs ($V_n$) et Faux Négatifs ($F_n$) :
+
+- *L'exactitude (Accuracy)* : ratio de prédictions correctes globales : $(V_p + V_n) / "Total"$. Bien qu'élevée à $0.917$ (soit $91.7%$ de bonnes intuitions globales), elle peut s'avérer trompeuse en asymétrie de classes (il "suffit" d'étiqueter systématiquement la classe majoritaire pour obtenir un score honorable).
+- *La précision (Precision)* : $V_p / (V_p + F_p)$. Parmi l'ensemble des comptes signalés comme "Bots" par notre modèle, quelle est la proportion réelle de vrais bots ? Elle s'élève ici à $0.684$.
+- *Le rappel (Recall ou Sensibilité)* : $V_p / (V_p + F_n)$. Parmi tous les bots *existant réellement* dans l'échantillon de test, combien le modèle a-t-il pu en identifier ? Avec notre configuration, cette métrique culmine à $0.929$ (près de $93%$ des bots sont débusqués).
+- *Le F1-Score* : la moyenne harmonique de la précision et du rappel, calculée selon $2 dot (P dot R) / (P + R)$. C'est le juge de paix. Face au déséquilibre de classe, notre modèle a abouti à un très bon score certifié par validation croisée de $0.788$.
+
+#figure(
+  image("img/rf-confusion-matrix.png", width: 70%),
+  caption: [Matrice de confusion du modèle Random Forest sur l'ensemble de Test]
 )
 
-#text(fill: red)[*Note relative à la préparation des données :* La formalisation définitive des transformations temporelles (par exemple l’application systématique d’un log) et des étapes de normalisation (telles que le *StandardScaler* pour nos algorithmes sensibles aux distances) ainsi que d'une éventuelle réduction de dimension (*PCA*) sera choisie ultérieurement lors de l'implémentation de la modélisation à l'issue de notre analyse exploratoire approfondie.]
+Cette matrice, et en particulier l'excellent score de rappel, illustre le compromis de "paranoïa utile" atteint par le modèle lors de la recherche des hyperparamètres (le poids `balanced` étant retenu). Il s'avère doté d'une redoutable capacité de détection des profils bots isolés, ne laissant s'échapper qu'une infime proportion d'entre eux, acceptant paradoxalement d'inclure quelques fausses alertes humaines en collatéral. 
+
+Si l'on se place dans le business case typique d'une plateforme de réseaux sociaux qui cherche à éliminer le traffic lié aux bots, il est préférable d'avoir recall élevé quitte à avoir plus de faux positifs : l'humain faux positif peut prouver qu'il n'est pas un robot (captcha, code par e-mail, action manuelle), mais un robot qui passe entre les mailles du filet ne sera jamais débusqué.
+
+== Modélisation Supervisée : SVM
+
+#text(fill: red)[À COMPLÉTER : Analyse de l'application de la théorie du Séparateur à Vaste Marge. Transformation d'échelle, optimisation des noyaux...]
+
+#pagebreak()
+
+= Modélisation Non-Supervisée
+
+#text(fill: red)[À COMPLÉTER : Analyse exploratoire de détection de groupes k-moyennes / autres algorithmes non-supervisés. Confrontation de la topographie aux observations manuelles annotées.]
+
+#pagebreak()
+
+= Discussions et Conclusion
+
+#text(fill: red)[À COMPLÉTER : Début de structure de la conclusion. Bilan récapitulatif sur l'hétérogénéité des méthodes adoptées, leurs failles ainsi que leur degré d'opérationnalité.]
 
 
 == Modèle supervisé
