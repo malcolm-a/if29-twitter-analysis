@@ -9,6 +9,12 @@ import polars as pl
 from src.db import get_db_connection
 
 SQL_PATH = Path(__file__).resolve().parents[2] / "src" / "etl" / "transform" / "user_features.sql"
+DEFAULT_SEMANTIC_FEATURES_PATH = (
+    Path(__file__).resolve().parents[2]
+    / "data"
+    / "processed"
+    / "tweet_semantic_repetition_features.parquet"
+)
 
 
 def ensure_user_features(force: bool = False) -> None:
@@ -35,11 +41,17 @@ def ensure_user_features(force: bool = False) -> None:
             conn.commit()
 
 
-def get_user_features(user_ids: list[int] | None = None) -> pl.DataFrame:
+def get_user_features(
+    user_ids: list[int] | None = None,
+    include_semantic: bool = False,
+    semantic_features_path: str | Path = DEFAULT_SEMANTIC_FEATURES_PATH,
+) -> pl.DataFrame:
     """Returns the feature matrix from the `user_features` materialized view.
 
     Args:
         user_ids: Optional list of user IDs to filter by.
+        include_semantic: If True, join cached tweet semantic repetition features.
+        semantic_features_path: Path to the sidecar Parquet semantic feature table.
 
     Returns:
         Polars DataFrame containing one row per user and all
@@ -59,15 +71,51 @@ def get_user_features(user_ids: list[int] | None = None) -> pl.DataFrame:
             rows = cur.fetchall()
             cols = [d[0] for d in cur.description]
 
-    return pl.DataFrame(rows, schema=cols, orient="row")
+    features = pl.DataFrame(rows, schema=cols, orient="row")
+    if include_semantic:
+        features = join_semantic_repetition_features(features, semantic_features_path)
+
+    return features
 
 
-def get_labeled_features(csv_path: str) -> pl.DataFrame:
+def load_semantic_repetition_features(
+    semantic_features_path: str | Path = DEFAULT_SEMANTIC_FEATURES_PATH,
+) -> pl.DataFrame:
+    path = Path(semantic_features_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Semantic feature file not found: {path}. Build it with "
+            "`uv run python -m src.etl.features.tweet_semantic_repetition "
+            "--output data/processed/tweet_semantic_repetition_features.parquet`."
+        )
+
+    return pl.read_parquet(path).with_columns(pl.col("user_id").cast(pl.Int64))
+
+
+def join_semantic_repetition_features(
+    features: pl.DataFrame,
+    semantic_features_path: str | Path = DEFAULT_SEMANTIC_FEATURES_PATH,
+) -> pl.DataFrame:
+    semantic_features = load_semantic_repetition_features(semantic_features_path)
+    return features.with_columns(pl.col("user_id").cast(pl.Int64)).join(
+        semantic_features,
+        on="user_id",
+        how="left",
+    )
+
+
+def get_labeled_features(
+    csv_path: str,
+    include_semantic: bool = False,
+    semantic_features_path: str | Path = DEFAULT_SEMANTIC_FEATURES_PATH,
+) -> pl.DataFrame:
     """Loads labels from the CSV and joins with features from the matview.
 
     Args:
         csv_path: Path to the labeled CSV file (e.g.
             `data/processed/labeling_sample.csv`).
+        include_semantic: If True, join cached tweet semantic repetition features.
+        semantic_features_path: Path to the sidecar Parquet semantic feature table.
 
     Returns:
         Polars DataFrame containing features and the `label` column (Int8).
@@ -81,7 +129,11 @@ def get_labeled_features(csv_path: str) -> pl.DataFrame:
     )
 
     user_ids = labels["user_id"].to_list()
-    features = get_user_features(user_ids)
+    features = get_user_features(
+        user_ids,
+        include_semantic=include_semantic,
+        semantic_features_path=semantic_features_path,
+    )
 
     return features.join(labels, on="user_id", how="inner")
 

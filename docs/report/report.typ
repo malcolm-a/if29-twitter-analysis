@@ -538,6 +538,8 @@ Pour expérimenter la classification supervisée, nous avons retenu l'algorithme
 Compte tenu du net déséquilibre de nos classes (17% de bots pour 83% d'humains), nous devions éviter d'avoir par hasard une représentation nulle des bots dans nos ensembles de validation. 
 Le jeu de données a été scindé à l'aide de la fonction `train_test_split` avec les proportions 80% (Entraînement - `X_train`) et 20% (Test - `X_test`), en spécifiant un argument de *stratification*. Cette précaution garantit mathématiquement que la distribution initiale des classes est honorée dans chacun des échantillons.
 
+#pagebreak()
+
 === Optimisation des hyperparamètres
 Afin d'ajuster finement les performances du Random Forest, nous avons mis en place une exploration des hyperparamètres via une recherche sur grille exhaustive (`GridSearchCV`).
 
@@ -548,6 +550,20 @@ Les paramètres de cette grille comprenaient notamment :
 - La pondération de classes (`class_weight = "balanced"`) face à l'asymétrie Humains/Bots.
 
 L'optimisation a été pilotée en validation croisée stratifiée sur le sous-ensemble d'entraînement à $5$ passes (`StratifiedKFold, n_splits=5`), employant, non pas la précision (*Accuracy*), mais spécifiquement le `F1-score` comme unique boussole d'apprentissage.
+
+=== Importance des features
+Un avantage pratique du Random Forest est qu'il donne une forme d'explicabilité assez directe via `feature_importances_`. L'idée n'est pas de dire qu'une variable "cause" le label bot, mais de mesurer quelles variables ont le plus souvent permis aux arbres de faire des séparations utiles.
+
+#figure(
+  image("img/rf-feature-importance.png", width: 78%),
+  caption: [Features les plus importantes dans le modèle Random Forest]
+)
+
+Dans notre modèle, les variables qui ressortent le plus sont `followers_count`, `reputation` et `followers_friends_ratio`. Ce sont toutes des variables liées à la structure sociale du compte : combien il est suivi, combien il suit d'autres comptes, et l'équilibre entre les deux. Ensuite viennent `retweet_rate` et `account_age_days`, qui capturent davantage le comportement : part de retweets et ancienneté du compte.
+
+C'est aussi pour cette raison que nous n'avons pas utilisé de PCA pour expliquer le Random Forest. Une PCA peut être utile pour visualiser les profils en deux dimensions, mais elle mélange les variables entre elles. Ici, garder les features originales permet de dire plus simplement quels signaux le modèle utilise réellement.
+
+#pagebreak()
 
 === Évaluation et Matrice de Confusion
 L'évaluation finale de notre modèle s'est faite sur l'ensemble de Test (20% des données), laissé jusque-là parfaitement invisible à l'apprentissage. Afin d'appréhender toute la granularité de ces résultats, particulièrement dans un contexte déséquilibré, nous nous sommes appuyés sur la matrice de confusion usuelle ainsi que sur plusieurs métriques, définies mathématiquement par les taux de Vrais Positifs ($V_p$), Faux Positifs ($F_p$), Vrais Négatifs ($V_n$) et Faux Négatifs ($F_n$) :
@@ -568,92 +584,124 @@ Si l'on se place dans le business case typique d'une plateforme de réseaux soci
 
 == Modélisation Supervisée : SVM
 
-#text(fill: red)[À COMPLÉTER : Analyse de l'application de la théorie du Séparateur à Vaste Marge. Transformation d'échelle, optimisation des noyaux...]
+#text(fill: red)[À COMPLÉTER : intégrer ici le SVM si on garde l'expérience. L'idée serait de rappeler que le SVM nécessite une standardisation, de donner le noyau retenu, les paramètres principaux, puis les scores accuracy, precision, recall et F1 sur le même split que le Random Forest.]
 
 #pagebreak()
 
 = Modélisation Non-Supervisée
 
-#text(fill: red)[À COMPLÉTER : Analyse exploratoire de détection de groupes k-moyennes / autres algorithmes non-supervisés. Confrontation de la topographie aux observations manuelles annotées.]
+L'objectif du non-supervisé était différent de celui du Random Forest. Ici, on ne cherche pas seulement à prédire les 420 labels déjà connus, mais surtout à voir si la structure globale des profils Twitter fait apparaître des groupes naturels. Nous avons donc testé deux approches : MiniBatch K-means à grande échelle, puis un clustering spectral sur l'échantillon annoté.
+
+== MiniBatch K-means sur l'ensemble des profils
+
+Pour K-means, nous avons voulu exploiter le fait que nous avions déjà une base de features pour tous les utilisateurs. Un K-means classique n'est pas pratique sur environ 1,8 million de profils, surtout avec une machine personnelle. Nous avons donc utilisé `MiniBatchKMeans`, qui met à jour les centroïdes par petits lots et permet de travailler en streaming.
+
+Le pipeline était le suivant : les 420 profils labellisés ont été exclus de l'entraînement, puis les autres profils ont été lus depuis PostgreSQL par lots de 50 000. Une première passe a servi à ajuster un `StandardScaler` avec `partial_fit`, puis une deuxième passe a entraîné le MiniBatch K-means, toujours par batch. Cela évite de charger toute la matrice en mémoire et évite aussi une fuite de données entre les profils labellisés et l'entraînement non-supervisé.
+
+Au final, le modèle a été entraîné sur 1 820 857 profils, avec `K=2`. Les 420 profils labellisés ont ensuite été projetés dans le même espace standardisé, puis affectés au cluster le plus proche.
+
+#table(
+  columns: (auto, auto, auto, auto),
+  table.header([Cluster], [Profils sonde], [Bots], [Taux de bots]),
+  [0], [265], [11], [4,2 %],
+  [1], [155], [61], [39,4 %],
+)
+
+Le résultat est intéressant mais pas suffisant comme classifieur direct. Le cluster 1 concentre beaucoup plus de bots que le cluster 0, mais il contient aussi 94 profils humains. Si on force une lecture simple où le cluster 1 devient le cluster suspect, on obtient une accuracy de 0,750, une precision de 0,394, un recall de 0,847 et un F1-score de 0,537. Le recall est donc correct, mais la precision reste faible : le clustering retrouve une zone de profils suspects, sans tracer une frontière propre entre humains et bots.
+
+#figure(
+  image("img/kmeans-pca-plot.png", width: 90%),
+  caption: [Projection PCA des 420 profils labellisés avec les clusters MiniBatch K-means entraînés sur les profils non labellisés]
+)
+
+Une limite cependant est également la qualité de notre labelisation. Certains profils humains sont très actifs et peuvent se retrouver dans le cluster suspect, tandis que certains bots sont plus discrets et se retrouvent dans le cluster humain. Le clustering non-supervisé ne peut pas remplacer un modèle supervisé, mais il peut aider à identifier des zones de suspicion. De même, notre labelisation manuelle est *subjective* : elle est basée sur une analyse humaine de métriques d'activité, mais il y a une grande part d'interprétation et d'intuition. On peut mettre en doute le fait que le k-means s'éloigne de la réalité et penser que peut-être notre labelisation passe à côté de certaines nuances. Le clustering non-supervisé peut donc aussi servir à vérifier la pertinence de nos labels.
+
+== Clustering spectral sur les 420 profils
+
+Nous avons aussi testé un clustering spectral sur les 420 profils annotés. L'idée était de ne pas se limiter à des centroïdes comme dans K-means. Le clustering spectral construit d'abord un graphe de similarité entre profils, ici avec les 10 plus proches voisins, puis travaille dans l'espace spectral associé au graphe. En pratique, la matrice des vecteurs propres du graphe peut faire ressortir des relations sous-jacentes qui ne sont pas bien séparées dans l'espace original.
+
+Cette approche a été lancée avec un binaire Rust `spectral-rs` emprunté à l'application GraphXR sur laquelle certain d'entre nous ont travaillé, sur un graphe de 420 noeuds et 2 174 arêtes. L'algorithme a trouvé 3 clusters. Les scores par rapport aux labels manuels restent modestes : ARI = 0,253 et NMI = 0,112.
+
+#table(
+  columns: (auto, auto, auto, auto),
+  table.header([Cluster spectral], [Profils], [Bots], [Taux de bots]),
+  [0], [11], [1], [9,1 %],
+  [1], [63], [32], [50,8 %],
+  [2], [346], [39], [11,3 %],
+)
+
+Le cluster 1 est le plus suspect, avec environ la moitié de bots, mais il ne récupère que 32 bots sur 72. Si on le lit comme cluster bot, on obtient environ 0,831 d'accuracy, 0,508 de precision, 0,444 de recall et 0,474 de F1-score. Ce n'est donc pas meilleur que le Random Forest, mais cela donne une autre lecture : le spectral isole un petit groupe dense de profils atypiques plutôt qu'un groupe large de suspects.
+
+#figure(
+  image("img/spectral-pca-plot.png", width: 90%),
+  caption: [Projection PCA des 420 profils avec les clusters spectral-rs]
+)
 
 #pagebreak()
 
-= Discussions et Conclusion
+= Discussion, résultats et conclusion
 
-#text(fill: red)[À COMPLÉTER : Début de structure de la conclusion. Bilan récapitulatif sur l'hétérogénéité des méthodes adoptées, leurs failles ainsi que leur degré d'opérationnalité.]
+== Bilan des modèles
 
+Les modèles donnent des résultats assez cohérents avec ce qu'on pouvait attendre. Le Random Forest est le plus efficace quand on veut prédire directement le label bot/humain, car il apprend la frontière à partir de nos annotations. Les méthodes non-supervisées, elles, sont plus exploratoires : elles font ressortir des zones de profils suspects, mais elles ne remplacent pas un modèle supervisé pour prendre une décision profil par profil.
 
-== Modèle supervisé
+#table(
+  columns: (auto, auto, auto, auto, auto),
+  table.header([Méthode], [Accuracy], [Precision], [Recall], [F1]),
+  [Random Forest], [0,917], [0,684], [0,929], [0,788],
+  [MiniBatch K-means], [0,750], [0,394], [0,847], [0,537],
+  [Spectral clustering], [0,831], [0,508], [0,444], [0,474],
+)
 
-#text(
-  fill: red,
-)[COMPLÉTER : choix de l'algorithme (Random Forest, SVM, Logistic Regression, XGBoost...), justification, paramètres optimaux, validation croisée, métriques d'évaluation (accuracy, precision, recall, F1-score, matrice de confusion).]
+#text(fill: red)[À compléter : ajouter la ligne SVM dans ce tableau.]
 
-== Modèle non-supervisé
+Le Random Forest a surtout l'avantage d'un recall élevé : il retrouve 13 bots sur 14 dans le test set. C'est le comportement que l'on préfère dans notre cas d'usage, parce qu'un faux positif humain peut être revérifié, alors qu'un bot qui passe sous le radar reste actif. La precision plus faible veut simplement dire que le modèle est un peu agressif dans sa détection.
 
-#text(
-  fill: red,
-)[COMPLÉTER : choix de l'algorithme (K-means, DBSCAN, clustering hiérarchique...), justification, choix du nombre de clusters (méthode du coude, silhouette), interprétation des clusters.]
+== Random Forest contre clustering
 
-== Comparaison des deux approches
+La comparaison RF contre K-means n'est pas parfaitement symétrique. Le Random Forest est entraîné à reproduire nos labels, tandis que K-means ne connaît pas la notion de bot. Le fait que le cluster 1 du MiniBatch K-means contienne 39,4 % de bots reste donc un signal intéressant : il montre que les features de comportement regroupent naturellement une partie des profils suspects. En revanche, ce cluster contient encore beaucoup d'humains, donc il ne peut pas être utilisé seul comme règle de décision.
 
-#text(
-  fill: red,
-)[COMPLÉTER : méthodologie de comparaison. Comment évaluer le non-supervisé sans labels ? Approches possibles : ARI (Adjusted Rand Index) si on confronte les clusters aux labels manuels, analyse qualitative des clusters, etc.]
+Le spectral clustering donne une lecture un peu différente. Il isole un groupe plus petit et plus dense, avec un taux de bots plus élevé, mais il manque beaucoup de bots. Cela peut être utile pour une analyse exploratoire ou pour repérer certains types de profils très marqués, mais pas pour une détection complète.
 
-#pagebreak()
-
-// ============================================================
-// 6. RÉSULTATS
-// ============================================================
-
-= Résultats
-
-#text(fill: red)[SECTION À COMPLÉTER APRÈS AVOIR EXÉCUTÉ LES DEUX MODÈLES.]
-
-== Performances du modèle supervisé
-
-#text(
-  fill: red,
-)[COMPLÉTER : présenter la matrice de confusion, le rapport de classification (precision/recall/f1 par classe), la courbe ROC/AUC. Commenter les features les plus importantes (feature importance pour Random Forest, coefficients pour Logistic Regression).]
-
-== Résultats du clustering non-supervisé
-
-#text(
-  fill: red,
-)[COMPLÉTER : présenter une visualisation 2D des clusters (t-SNE ou PCA), les centroïdes, la distribution des features par cluster. Interpréter chaque cluster : correspond-il à une classe identifiable ?]
-
-== Analyse comparative
-
-#text(
-  fill: red,
-)[COMPLÉTER : comparer les deux approches sur les dimensions suivantes : performance prédictive, interprétabilité, capacité à découvrir des patterns imprévus, dépendance aux labels humains, coût de mise en œuvre.]
-
-#pagebreak()
-
-// ============================================================
-// 7. DISCUSSION, LIMITES ET PERSPECTIVES
-// ============================================================
-
-= Discussion, limites et perspectives
-
-== Interprétation des résultats
-
-#text(
-  fill: red,
-)[COMPLÉTER : que nous apprennent les résultats ? Les deux approches convergent-elles vers les mêmes profils atypiques ? Y a-t-il des profils détectés par une approche mais pas par l'autre ?]
+Au final, l'approche supervisée est plus opérationnelle. Le non-supervisé sert plutôt à comprendre la topographie des profils et à vérifier que nos features ne sont pas totalement arbitraires.
 
 == Limites
 
-#text(
-  fill: red,
-)[COMPLÉTER : discuter les limites de l'étude. Suggestions : taille de l'échantillon labellisé (1 000 profils, peut-être insuffisant) ; biais d'annotation (subjectivité humaine, erreurs de labellisation) ; fenêtre temporelle limitée (Coupe du Monde 2018), les comportements observés sont-ils généralisables ? ; absence de features avancées (analyse de sentiment, NLP sur les tweets, score SPOT complet) ; déséquilibre des classes et impact sur les métriques.]
+La limite principale reste la labellisation. Nous n'avons que 420 profils annotés, et même si le travail a été fait sérieusement, une part de subjectivité reste présente. Certains comptes peuvent être hybrides, automatisés partiellement, ou simplement très actifs pendant la Coupe du Monde.
 
-== Perspectives d'industrialisation
+Le contexte joue aussi beaucoup. Pendant un événement mondial, des humains peuvent retweeter massivement, utiliser beaucoup de hashtags, ou parler presque toujours du même sujet. Cela rapproche certains comportements humains de comportements que l'on associe habituellement aux bots. Nos résultats sont donc valables pour ce corpus et cette période, mais ils ne suffisent pas à généraliser à tout Twitter.
 
-#text(
-  fill: red,
-)[COMPLÉTER : comment passer d'un prototype étudiant à un outil utilisable en production ? Suggestions : orchestration du pipeline avec dbt ou Airflow ; mise en place de tests de qualité des données (dbt tests, Great Expectations) ; intégration continue des mises à jour de modèle (MLOps) ; utilisation d'APIs de vérification d'URLs (VirusTotal, Google Safe Browsing) pour enrichir la dimension « danger » du score SPOT ; déploiement du modèle supervisé via une API REST (FastAPI, Flask).]
+Enfin, nos features restent assez classiques : profil, activité, sources, URLs, hashtags, retweets. Elles capturent beaucoup de signaux utiles, mais elles ne comprennent pas réellement le contenu textuel des tweets.
+
+== Ouverture : POC sur la répétition sémantique
+
+Une idée complémentaire que nous avons eu est celle d'exploiter la principale absente de nos données : le contenu textuel des tweets. Nous avons d'abord voulu tenter de calculer la distance de Levenshtein, disponible nativement dans PostgreSQL, entre les tweets d'un même utilisateur. Cependant le calcul est très coûteux (Postgres refuse même de le faire à partir d'un certain nombre d'entrées) et il ne capture pas la sémantique.
+
+L'idée qui en découle est de calculer des embeddings vectoriels des tweets, et ensuite de mesurer la distance entre ces embeddings pour chaque utilisateur. Cela permettrait de quantifier la répétition sémantique : un bot répète souvent les mêmes idées ou reste dans un espace thématique étroit, tandis qu'un humain varie davantage. Cette addition en tant que composante principale de notre analyse est très intéressante, mais elle nécessite un temps de développement et de calcul important si on veut explorer les 4.5 millions de tweets. Il ne nous est donc pas possible de le faire sérieusement dans le cadre de ce projet.
+
+Cependant, pour aller un peu plus loin, nous avons lancé un _Proof Of Concepot_ avec l'aide de #emph("Codex") (harness et modèle d'OpenAI) séparé sur les 420 profils labellisés. L'idée était de créer des embeddings des tweets avec `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, puis de calculer des métriques de répétition sémantique par utilisateur.
+
+Ce POC a été gardé à part dans `src/ml/semantic_poc/`, justement pour ne pas le mélanger avec le coeur du rapport. Sur le même split que le Random Forest, l'ajout de ces features améliore légèrement les scores : accuracy de 0,917 à 0,929, recall de 0,929 à 1,000, et F1 de 0,788 à 0,824.
+
+#figure(
+  image("img/semantic_poc/semantic_rf_metrics.png", width: 90%),
+  caption: [Comparaison Random Forest sans et avec les features sémantiques du POC]
+)
+
+Les métriques sémantiques ne remplacent pas les features existantes mais ajoutent un signal complémentaire, avec des corrélations faibles ou modérées avec les features déjà présentes.
+
+#figure(
+  image("img/semantic_poc/semantic_behavior_correlations.png", width: 90%),
+  caption: [Corrélations entre répétition sémantique et features comportementales]
+)
+
+Il faudrait cependant le valider sur plus que 420 profils avant d'en faire une conclusion forte. Pour une suite du projet, ce serait une piste naturelle : calculer ces features sur tout le corpus, puis vérifier si le gain se maintient sur un échantillon plus large.
+
+== Conclusion
+
+Ce projet montre qu'une détection raisonnable de bots est possible avec des données publiques Twitter et des features assez simples. Le Random Forest donne les meilleurs résultats dans notre cadre, surtout grâce à son recall élevé. Les approches non-supervisées sont moins performantes en classification directe, mais elles confirment qu'une partie des profils suspects se regroupe naturellement dans l'espace des features.
+
+La suite logique serait d'élargir l'annotation, puis de tester plus sérieusement les features sémantiques. Le projet reste donc un prototype, mais il donne déjà une base exploitable pour distinguer des profils humains de profils automatisés ou atypiques.
 
 #pagebreak()
 
