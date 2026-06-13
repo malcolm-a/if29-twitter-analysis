@@ -586,22 +586,59 @@ Si l'on se place dans le business case typique d'une plateforme de réseaux soci
 
 #text(fill: red)[À COMPLÉTER : intégrer ici le SVM si on garde l'expérience. L'idée serait de rappeler que le SVM nécessite une standardisation, de donner le noyau retenu, les paramètres principaux, puis les scores accuracy, precision, recall et F1 sur le même split que le Random Forest.]
 
-Pour expérimenter la classification supervisée, nous avons retenu l'algorithme *Random Forest* (Forêts Aléatoires). Ce modèle ensembliste repose sur la construction d'un grand nombre d'arbres de décision appliqués sur des sous-échantillons aléatoires. Il est naturellement robuste face au sur-apprentissage et accommode sans heurt un ensemble hétéroclite de features.
+En plus du Random Forest, et parce qu'il nous semblait interressant de mettre en pratique ce que nous avons vu en cours, nous avons aussi décider d'implémenter un *modèle de machine à vecteur de support (SVM)*. Pour rappel, le SVM est un modèle qui classifie les données en trouvant une ligne optimale ou un hyperplan (dans un cas non linéairement séparable) permettant de maximiser la distance entre chaque classe dans un espace. 
 
 === Échantillonnage et validation
-Notre *modèle de machine à vecteur de support (SVM)* a été séparé, comme pour le Random Forest, grâce à la fonction `train_test_split` avec 80% des données qui ont servie en entrainement (un échantillon de 336 données - `X_train`) et 20% des données qui ont servie en tant que données de test (soit un échantillon de 84 samples - `X_test`).
-Comme dis dans la partie portant sur le Random Forest, étant donné le déséquilibre présent entre nos deux classes (Bot - Non-bot), 
-Compte tenu du net déséquilibre de nos classes (17% de bots pour 83% d'humains), nous devions éviter d'avoir par hasard une représentation nulle des bots dans nos ensembles de validation. 
-Le jeu de données a été scindé à l'aide de la fonction `train_test_split` avec les proportions 80% (Entraînement - `X_train`) et 20% (Test - `X_test`), en spécifiant un argument de *stratification*. Cette précaution garantit mathématiquement que la distribution initiale des classes est honorée dans chacun des échantillons.
+Notre SVM a été séparé, comme pour le Random Forest, grâce à la fonction `train_test_split` avec 80% des données qui ont servie en entrainement (un échantillon de 336 données - `X_train`) et 20% des données qui ont servie en tant que données de test (soit un échantillon de 84 samples - `X_test`).
+Comme dis dans la partie portant sur le Random Forest, étant donné le déséquilibre présent entre nos deux classes (Bot - Non-bot), nous avons dû spécifié un argument de *stratification*.
 
 #pagebreak()
 
 === Optimisation des hyperparamètres
+Lors de notre analyse des données, nous avions eu une première intuition qui était que notre cas d'étude ne serait pas linéairement séparable, donc que par défaut nous n'utiliserions pas de *noyau linéaire*.
+
+Dans l'objectif de trouver les meilleurs hyperparamètres, nous avons mis en place une exploration des hyperparamètres via une recherche sur grille exhaustive (`GridSeachCv`).
+
+Les paramètres de cette grille comprenaient notamment :
+- Le type de noyau (`kernel`).
+- Le coefficient de régularisation inversé (`C`).
+
+Par défaut, la pondération de classes (`class_weight`), dû à l'asymétrie Humains/Bots, a été faite avec l'hyperparamètre `balanced`.
+
+L'optimisation a été pilotée en validation croisée stratifiée sur le sous-ensemble d'entraînement à $5$ passes (`StratifiedKFold, n_splits=5`), employant, non pas la précision (*Accuracy*), mais spécifiquement le `F1-score` comme unique boussole d'apprentissage.
+
+#pagebreak()
 
 === Importance des features
+Un avantage pratique du Random Forest est qu'il donne une forme d'explicabilité assez directe via `feature_importances_`. L'idée n'est pas de dire qu'une variable "cause" le label bot, mais de mesurer quelles variables ont le plus souvent permis aux arbres de faire des séparations utiles.
+
+#figure(
+  image("img/rf-feature-importance.png", width: 78%),
+  caption: [Features les plus importantes dans le modèle Random Forest]
+)
+
+Dans notre modèle, les variables qui ressortent le plus sont `followers_count`, `reputation` et `followers_friends_ratio`. Ce sont toutes des variables liées à la structure sociale du compte : combien il est suivi, combien il suit d'autres comptes, et l'équilibre entre les deux. Ensuite viennent `retweet_rate` et `account_age_days`, qui capturent davantage le comportement : part de retweets et ancienneté du compte.
+
+C'est aussi pour cette raison que nous n'avons pas utilisé de PCA pour expliquer le Random Forest. Une PCA peut être utile pour visualiser les profils en deux dimensions, mais elle mélange les variables entre elles. Ici, garder les features originales permet de dire plus simplement quels signaux le modèle utilise réellement.
+
+#pagebreak()
 
 === Évaluation et Matrice de Confusion
+L'évaluation finale de notre modèle s'est faite sur l'ensemble de Test (20% des données), laissé jusque-là parfaitement invisible à l'apprentissage. Afin d'appréhender toute la granularité de ces résultats, particulièrement dans un contexte déséquilibré, nous nous sommes appuyés sur la matrice de confusion usuelle ainsi que sur plusieurs métriques, définies mathématiquement par les taux de Vrais Positifs ($V_p$), Faux Positifs ($F_p$), Vrais Négatifs ($V_n$) et Faux Négatifs ($F_n$) :
 
+- *L'exactitude (Accuracy)* : ratio de prédictions correctes globales : $(V_p + V_n) / "Total"$. Bien qu'élevée à $0.917$ (soit $91.7%$ de bonnes intuitions globales), elle peut s'avérer trompeuse en asymétrie de classes (il "suffit" d'étiqueter systématiquement la classe majoritaire pour obtenir un score honorable).
+- *La précision (Precision)* : $V_p / (V_p + F_p)$. Parmi l'ensemble des comptes signalés comme "Bots" par notre modèle, quelle est la proportion réelle de vrais bots ? Elle s'élève ici à $0.684$.
+- *Le rappel (Recall ou Sensibilité)* : $V_p / (V_p + F_n)$. Parmi tous les bots *existant réellement* dans l'échantillon de test, combien le modèle a-t-il pu en identifier ? Avec notre configuration, cette métrique culmine à $0.929$ (près de $93%$ des bots sont débusqués).
+- *Le F1-Score* : la moyenne harmonique de la précision et du rappel, calculée selon $2 dot (P dot R) / (P + R)$. C'est le juge de paix. Face au déséquilibre de classe, notre modèle a abouti à un très bon score certifié par validation croisée de $0.788$.
+
+#figure(
+  image("img/rf-confusion-matrix.png", width: 70%),
+  caption: [Matrice de confusion du modèle Random Forest sur l'ensemble de Test]
+)
+
+Cette matrice, et en particulier l'excellent score de rappel, illustre le compromis de "paranoïa utile" atteint par le modèle lors de la recherche des hyperparamètres (le poids `balanced` étant retenu). Il s'avère doté d'une redoutable capacité de détection des profils bots isolés, ne laissant s'échapper qu'une infime proportion d'entre eux, acceptant paradoxalement d'inclure quelques fausses alertes humaines en collatéral. 
+
+Si l'on se place dans le business case typique d'une plateforme de réseaux sociaux qui cherche à éliminer le traffic lié aux bots, il est préférable d'avoir recall élevé quitte à avoir plus de faux positifs : l'humain faux positif peut prouver qu'il n'est pas un robot (captcha, code par e-mail, action manuelle), mais un robot qui passe entre les mailles du filet ne sera jamais débusqué.
 
 = Modélisation Non-Supervisée
 
