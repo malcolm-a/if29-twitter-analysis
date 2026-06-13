@@ -586,7 +586,22 @@ Si l'on se place dans le business case typique d'une plateforme de réseaux soci
 
 #text(fill: red)[À COMPLÉTER : intégrer ici le SVM si on garde l'expérience. L'idée serait de rappeler que le SVM nécessite une standardisation, de donner le noyau retenu, les paramètres principaux, puis les scores accuracy, precision, recall et F1 sur le même split que le Random Forest.]
 
+Pour expérimenter la classification supervisée, nous avons retenu l'algorithme *Random Forest* (Forêts Aléatoires). Ce modèle ensembliste repose sur la construction d'un grand nombre d'arbres de décision appliqués sur des sous-échantillons aléatoires. Il est naturellement robuste face au sur-apprentissage et accommode sans heurt un ensemble hétéroclite de features.
+
+=== Échantillonnage et validation
+Notre *modèle de machine à vecteur de support (SVM)* a été séparé, comme pour le Random Forest, grâce à la fonction `train_test_split` avec 80% des données qui ont servie en entrainement (un échantillon de 336 données - `X_train`) et 20% des données qui ont servie en tant que données de test (soit un échantillon de 84 samples - `X_test`).
+Comme dis dans la partie portant sur le Random Forest, étant donné le déséquilibre présent entre nos deux classes (Bot - Non-bot), 
+Compte tenu du net déséquilibre de nos classes (17% de bots pour 83% d'humains), nous devions éviter d'avoir par hasard une représentation nulle des bots dans nos ensembles de validation. 
+Le jeu de données a été scindé à l'aide de la fonction `train_test_split` avec les proportions 80% (Entraînement - `X_train`) et 20% (Test - `X_test`), en spécifiant un argument de *stratification*. Cette précaution garantit mathématiquement que la distribution initiale des classes est honorée dans chacun des échantillons.
+
 #pagebreak()
+
+=== Optimisation des hyperparamètres
+
+=== Importance des features
+
+=== Évaluation et Matrice de Confusion
+
 
 = Modélisation Non-Supervisée
 
