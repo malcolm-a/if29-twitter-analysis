@@ -211,6 +211,8 @@ Ces index permettent à PostgreSQL d'utiliser des parcours d'index (index scan) 
 
 Afin de valider objectivement notre choix de système de stockage, nous avons implémenté une pipeline identique avec MongoDB (v7.0) et comparé les performances sur les trois étapes critiques : ingestion, calcul des features utilisateur et fetch des utilisateurs enrichis. Les tests ont été réalisés sur un sous-ensemble croissant de fichiers (1, 20 et 50 fichiers, soit jusqu'à 100 000 tweets) avec des lots d'insertion de 2 000 documents (1 insertion par fichier).
 
+#pagebreak()
+
 === Performance d'ingestion
 
 #table(
@@ -315,7 +317,7 @@ Pour chaque utilisateur, le CSV exporté contient : les *métadonnées du profil
 Le tableau ci-dessous détaille les indicateurs clés mis à disposition de l'annotateur.
 
 #table(
-  columns: (auto, auto, auto),
+  columns: (4fr, 3fr, 4fr),
   table.header([*Colonne*], [*Signification*], [*Utilisation*]),
   [followers_count], [Nombre d'abonnés], [Un compte avec 0 followers et beaucoup de tweets est suspect],
   [friends_count], [Abonnements (following)], [Un ratio followers/friends très déséquilibré (>5) suggère un bot],
@@ -358,7 +360,6 @@ Ces indicateurs portent sur les métadonnées du compte, indépendamment de son 
 - Une *date de création récente* couplée à un volume de statuts anormalement élevé (ex. compte créé il y a 3 mois avec 50 000 tweets).
 
 
-#pagebreak()
 
 === Indicateurs d'activité (Activity-based features)
 
@@ -366,6 +367,8 @@ Ces indicateurs sont calculés à partir de l'activité observée du compte :
 
 - Une *fréquence de publication excessive* : un rythme soutenu de plus de 50 tweets par jour, maintenu sur une longue période, dépasse les capacités humaines. Le papier SPOT (Perez et al., 2011) qualifie ce phénomène de *degré d'agressivité*.
 - Une *présence massive d'URLs* dans les tweets : les bots diffusent souvent des liens raccourcis à des fins de spam ou de phishing.
+
+#pagebreak()
 
 === Indicateurs de contenu (Content-based features)
 
@@ -543,7 +546,6 @@ Pour expérimenter la classification supervisée, nous avons retenu l'algorithme
 === Échantillonnage et validation
 Pour le Random Forest, le split commun décrit plus haut a été réalisé avec `train_test_split` en conservant la stratification. Cette précaution évite qu'un sous-ensemble de validation ou de test contienne trop peu de bots, ce qui fausserait fortement la lecture du recall et du F1-score.
 
-#pagebreak()
 
 === Optimisation des hyperparamètres
 Afin d'ajuster finement les performances du Random Forest, nous avons mis en place une exploration des hyperparamètres via une recherche sur grille exhaustive (`GridSearchCV`).
@@ -560,15 +562,13 @@ L'optimisation a été pilotée en validation croisée stratifiée sur le sous-e
 Un avantage pratique du Random Forest est qu'il donne une forme d'explicabilité assez directe via `feature_importances_`. L'idée n'est pas de dire qu'une variable "cause" le label bot, mais de mesurer quelles variables ont le plus souvent permis aux arbres de faire des séparations utiles.
 
 #figure(
-  image("img/rf-feature-importance.png", width: 78%),
+  image("img/rf-feature-importance.png", width: 70%),
   caption: [Features les plus importantes dans le modèle Random Forest]
 )
 
 Dans notre modèle, les variables qui ressortent le plus sont `followers_count`, `reputation` et `followers_friends_ratio`. Ce sont toutes des variables liées à la structure sociale du compte : combien il est suivi, combien il suit d'autres comptes, et l'équilibre entre les deux. Ensuite viennent `retweet_rate` et `account_age_days`, qui capturent davantage le comportement : part de retweets et ancienneté du compte.
 
 C'est aussi pour cette raison que nous n'avons pas utilisé de PCA pour expliquer le Random Forest. Une PCA peut être utile pour visualiser les profils en deux dimensions, mais elle mélange les variables entre elles. Ici, garder les features originales permet de dire plus simplement quels signaux le modèle utilise réellement.
-
-#pagebreak()
 
 === Évaluation et matrice de confusion
 Sur l'ensemble de test, le Random Forest obtient une accuracy de $0.917$, une precision de $0.684$, un recall de $0.929$ et un F1-score de $0.788$. La lecture importante est donc moins l'accuracy, naturellement élevée dans un jeu déséquilibré, que le recall : le modèle retrouve 13 bots sur 14.
@@ -758,7 +758,7 @@ Cependant, pour aller un peu plus loin, nous avons lancé un _Proof Of Concepot_
 Ce POC a été gardé à part dans `src/ml/semantic_poc/`, justement pour ne pas le mélanger avec le coeur du rapport. Sur le même split que le Random Forest, l'ajout de ces features améliore légèrement les scores : accuracy de 0,917 à 0,929, recall de 0,929 à 1,000, et F1 de 0,788 à 0,824.
 
 #figure(
-  image("img/semantic_poc/semantic_rf_metrics.png", width: 90%),
+  image("img/semantic_poc/semantic_rf_metrics.png", width: 80%),
   caption: [Comparaison Random Forest sans et avec les features sémantiques du POC]
 )
 
