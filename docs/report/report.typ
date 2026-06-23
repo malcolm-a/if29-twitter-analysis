@@ -531,13 +531,17 @@ L'approche de mise à l'échelle (*scaling*) n'est pas universelle. Dans ce proj
 - Pour le modèle de *Forêts Aléatoires (Random Forest)*, aucune standardisation (`StandardScaler`) n'a été appliquée. Les algorithmes d'arbres partitionnent l'espace de manière orthogonale en divisant les fonctionnalités sur des seuils de décision (ex: $X > 100$). Une transformation monotone ou affine ne change pas la structure des nœuds ; elle est complètement invariante à l'échelle.
 - À l'inverse, l'approche par *Machine à Vecteurs de Support (SVM)*, explorée par la suite, ainsi que le *Clustering*, reposent formellement sur le calcul matriciel de distances euclidiennes. Sur ces derniers, un espace de variables déséquilibré fausse l'hyperplan optimal. Il requiert un processus de standardisation systématique des caractéristiques, voire parfois une transformation logarithmique (*log1p*) sur les données comportant de grandes disproportions et d'importantes asymétries de distribution statistiques (*heavy-tailed data*).
 
+=== Cadre commun d'évaluation
+Les modèles supervisés ont été entraînés et évalués dans les mêmes conditions : 420 profils labellisés, un split stratifié 80% entraînement / 20% test, une validation croisée stratifiée à 5 plis sur l'entraînement, et une pondération `class_weight = "balanced"` pour tenir compte du déséquilibre de classes, avec environ 17% de bots.
+
+L'ensemble de test est resté invisible pendant l'entraînement. Les résultats sont ensuite lus à partir de la matrice de confusion et de quatre métriques : l'accuracy mesure la proportion globale de prédictions correctes, la precision indique la part de vrais bots parmi les profils signalés comme bots, le recall mesure la part de bots réellement retrouvés, et le F1-score synthétise precision et recall par moyenne harmonique. Dans notre cas d'usage, le recall est prioritaire : un humain faussement signalé peut être revérifié, alors qu'un bot non détecté reste actif.
+
 == Modélisation Supervisée : Random Forest
 
 Pour expérimenter la classification supervisée, nous avons retenu l'algorithme *Random Forest* (Forêts Aléatoires). Ce modèle ensembliste repose sur la construction d'un grand nombre d'arbres de décision appliqués sur des sous-échantillons aléatoires. Il est naturellement robuste face au sur-apprentissage et accommode sans heurt un ensemble hétéroclite de features.
 
 === Échantillonnage et validation
-Compte tenu du net déséquilibre de nos classes (17% de bots pour 83% d'humains), nous devions éviter d'avoir par hasard une représentation nulle des bots dans nos ensembles de validation. 
-Le jeu de données a été scindé à l'aide de la fonction `train_test_split` avec les proportions 80% (Entraînement - `X_train`) et 20% (Test - `X_test`), en spécifiant un argument de *stratification*. Cette précaution garantit mathématiquement que la distribution initiale des classes est honorée dans chacun des échantillons.
+Pour le Random Forest, le split commun décrit plus haut a été réalisé avec `train_test_split` en conservant la stratification. Cette précaution évite qu'un sous-ensemble de validation ou de test contienne trop peu de bots, ce qui fausserait fortement la lecture du recall et du F1-score.
 
 #pagebreak()
 
@@ -566,29 +570,21 @@ C'est aussi pour cette raison que nous n'avons pas utilisé de PCA pour explique
 
 #pagebreak()
 
-=== Évaluation et Matrice de Confusion
-L'évaluation finale de notre modèle s'est faite sur l'ensemble de Test (20% des données), laissé jusque-là parfaitement invisible à l'apprentissage. Afin d'appréhender toute la granularité de ces résultats, particulièrement dans un contexte déséquilibré, nous nous sommes appuyés sur la matrice de confusion usuelle ainsi que sur plusieurs métriques, définies mathématiquement par les taux de Vrais Positifs ($V_p$), Faux Positifs ($F_p$), Vrais Négatifs ($V_n$) et Faux Négatifs ($F_n$) :
-
-- *L'exactitude (Accuracy)* : ratio de prédictions correctes globales : $(V_p + V_n) / "Total"$. Bien qu'élevée à $0.917$ (soit $91.7%$ de bonnes intuitions globales), elle peut s'avérer trompeuse en asymétrie de classes (il "suffit" d'étiqueter systématiquement la classe majoritaire pour obtenir un score honorable).
-- *La précision (Precision)* : $V_p / (V_p + F_p)$. Parmi l'ensemble des comptes signalés comme "Bots" par notre modèle, quelle est la proportion réelle de vrais bots ? Elle s'élève ici à $0.684$.
-- *Le rappel (Recall ou Sensibilité)* : $V_p / (V_p + F_n)$. Parmi tous les bots *existant réellement* dans l'échantillon de test, combien le modèle a-t-il pu en identifier ? Avec notre configuration, cette métrique culmine à $0.929$ (près de $93%$ des bots sont débusqués).
-- *Le F1-Score* : la moyenne harmonique de la précision et du rappel, calculée selon $2 dot (P dot R) / (P + R)$. C'est le juge de paix. Face au déséquilibre de classe, notre modèle a abouti à un très bon score certifié par validation croisée de $0.788$.
+=== Évaluation et matrice de confusion
+Sur l'ensemble de test, le Random Forest obtient une accuracy de $0.917$, une precision de $0.684$, un recall de $0.929$ et un F1-score de $0.788$. La lecture importante est donc moins l'accuracy, naturellement élevée dans un jeu déséquilibré, que le recall : le modèle retrouve 13 bots sur 14.
 
 #figure(
   image("img/rf-confusion-matrix.png", width: 70%),
   caption: [Matrice de confusion du modèle Random Forest sur l'ensemble de Test]
 )
 
-Cette matrice, et en particulier l'excellent score de rappel, illustre le compromis de "paranoïa utile" atteint par le modèle lors de la recherche des hyperparamètres (le poids `balanced` étant retenu). Il s'avère doté d'une redoutable capacité de détection des profils bots isolés, ne laissant s'échapper qu'une infime proportion d'entre eux, acceptant paradoxalement d'inclure quelques fausses alertes humaines en collatéral. 
-
-Si l'on se place dans le business case typique d'une plateforme de réseaux sociaux qui cherche à éliminer le traffic lié aux bots, il est préférable d'avoir recall élevé quitte à avoir plus de faux positifs : l'humain faux positif peut prouver qu'il n'est pas un robot (captcha, code par e-mail, action manuelle), mais un robot qui passe entre les mailles du filet ne sera jamais débusqué.
+Cette matrice illustre le compromis de "paranoïa utile" atteint par le modèle lors de la recherche des hyperparamètres. Le poids `balanced` pousse le Random Forest à détecter presque tous les bots, au prix de quelques fausses alertes humaines.
 
 == Modélisation Supervisée : SVM
 En plus du Random Forest, et parce qu'il nous semblait interressant de mettre en pratique ce que nous avons vu en cours, nous avons aussi décider d'implémenter un *modèle de machine à vecteur de support (SVM)*. Pour rappel, le SVM est un modèle qui classifie les données en trouvant une ligne optimale ou un hyperplan (dans un cas non linéairement séparable) permettant de maximiser la distance entre chaque classe dans un espace. 
 
 === Échantillonnage et validation
-Notre SVM a été séparé, comme pour le Random Forest, grâce à la fonction `train_test_split` avec 80% des données qui ont servie en entrainement (un échantillon de 336 données - `X_train`) et 20% des données qui ont servie en tant que données de test (soit un échantillon de 84 samples - `X_test`).
-Comme dis dans la partie portant sur le Random Forest, étant donné le déséquilibre présent entre nos deux classes (Bot - Non-bot), nous avons dû spécifié un argument de *stratification*.
+Le SVM reprend le même split stratifié que le Random Forest : 336 profils pour l'entraînement et 84 profils pour le test. Cette symétrie permet de comparer les deux modèles sur le même niveau d'information et sur le même déséquilibre de classes.
 
 === Réduction dimensionnelle
 
@@ -641,49 +637,29 @@ Ces axes rejoignent les features identifiées comme importantes par le Random Fo
 === Évaluation
 
 ==== Matrice de confusion
-Tout comme pour le Random Forest, l'évaluation finale de notre SVM s'est faite sur l'ensemble de Test (20% des données), laissé jusque-là parfaitement invisible à l'apprentissage. Afin d'appréhender toute la granularité de ces résultats, particulièrement dans un contexte déséquilibré, nous nous sommes appuyés sur la matrice de confusion usuelle ainsi que sur plusieurs métriques, définies mathématiquement par les taux de Vrais Positifs ($V_p$), Faux Positifs ($F_p$), Vrais Négatifs ($V_n$) et Faux Négatifs ($F_n$) :
-
-- *L'exactitude (Accuracy)* : ratio de prédictions correctes globales : $(V_p + V_n) / "Total"$. Elle s'élève à $0.881$ (soit $88.1%$ de bonnes prédictions globales). Comme pour le Random Forest, elle peut s'avérer trompeuse en asymétrie de classes.
-- *La précision (Precision)* : $V_p / (V_p + F_p)$. Parmi l'ensemble des comptes signalés comme "Bots" par notre modèle, quelle est la proportion réelle de vrais bots ? Elle s'élève ici à $0.625$.
-- *Le rappel (Recall ou Sensibilité)* : $V_p / (V_p + F_n)$. Parmi tous les bots *existant réellement* dans l'échantillon de test, combien le modèle a-t-il pu en identifier ? Avec notre configuration, cette métrique atteint $0.714$ (10 bots détectés sur 14).
-- *Le F1-Score* : la moyenne harmonique de la précision et du rappel, calculée selon $2 dot (P dot R) / (P + R)$. C'est le juge de paix. Face au déséquilibre de classe, notre modèle a abouti à un score certifié par validation croisée de $0.727$.
+Le GridSearchCV maximise un F1 moyen de $0.727$ en validation croisée. Sur l'ensemble de test, au seuil de décision par défaut, le SVM obtient une accuracy de $0.881$, une precision de $0.625$, un recall de $0.714$ et un F1-score de $0.667$.
 
 #figure(
-  image("img/svm-confusion-matrix.png", width: 70%),
+  image("img/svm-confusion-matrix.png", width: 67%),
   caption: [Matrice de confusion du modèle SVM sur l'ensemble de Test]
 )
 
-Cette matrice illustre un comportement plus équilibré que le Random Forest : le SVM détecte 10 bots sur 14 (recall de 0,71) tout en générant seulement 6 faux positifs sur 70 non-bots (precision de 0,62). Le compromis est donc moins agressif que le RF — qui privilégiait un recall très élevé au prix de davantage de fausses alertes.
+Cette matrice illustre un comportement plus prudent que le Random Forest : le SVM détecte 10 bots sur 14 tout en générant 6 faux positifs sur 70 non-bots. Le compromis est donc moins agressif que le RF, qui privilégie un recall très élevé au prix de davantage de fausses alertes.
 
-Ce comportement plus prudent peut s'expliquer par la nature même du SVM : il cherche à maximiser la marge entre les classes dans l'espace PCA, ce qui tend à produire une frontière de décision plus conservative. Dans notre cas d'usage (détection de bots), un recall de 0,71 reste acceptable, mais le RF reste préférable si l'on prioritise la détection exhaustive.
+Ce comportement peut s'expliquer par la nature même du SVM : il cherche à maximiser la marge entre les classes dans l'espace PCA, ce qui tend à produire une frontière de décision plus conservative. Dans notre cas d'usage, le recall de $0.714$ reste utile, mais le RF reste préférable si l'on priorise la détection exhaustive.
 
 ==== ROC-AUC
 
-La courbe ROC (Receiver Operating Characteristic) complète l'analyse de la matrice de confusion en évaluant les performances du modèle sur *tous les seuils de décision possibles*, et non plus uniquement au seuil par défaut $f = 0$. Pour chaque seuil, elle trace le taux de vrais positifs (`recall`) en fonction du taux de faux positifs (FPR = $F_p / (F_p + V_n)$). L'aire sous cette courbe, l'*AUC* (Area Under the Curve), résume cette performance en un unique scalaire : 1,0 représente un classifieur parfait, 0,5 un classifieur aléatoire.
+La courbe ROC complète l'analyse de la matrice de confusion en évaluant le modèle sur tous les seuils de décision possibles, et non plus uniquement au seuil par défaut $f = 0$. L'aire sous cette courbe, l'*AUC*, résume la capacité du modèle à classer les bots au-dessus des humains dans son score de décision.
 
 Notre SVM obtient une *AUC de 0,933*, ce qui signifie que dans 93,3 % des cas, il attribue un score de décision plus élevé à un vrai bot qu'à un vrai humain. C'est un indicateur de bonne *discrimination globale*, indépendamment du seuil choisi.
 
 #figure(
-  image("img/svm-roc-curve.png", width: 69%),
+  image("img/svm-roc-curve.png", width: 67%),
   caption: [Courbe ROC du modèle SVM — AUC = 0,933]
 )
 
-Cette AUC élevée nuance le F1 de 0,667 observé au seuil par défaut : le modèle *sait* bien ordonner les profils par risque, mais son point de fonctionnement naturel n'est pas optimal pour notre use case. En abaissant le seuil de décision, on pourrait augmenter le recall au-delà de 0,71 au prix d'une précision réduite.
-
-
-
-== Conclusion
-
-=== interprétation des résultats
-Les deux modèles supervisés ont été entraînés et évalués dans les mêmes conditions : 420 profils labellisés, split 80/20 stratifié, validation croisée à 5 plis, et `class_weight=balanced` pour tenir compte du déséquilibre de classes (~17 % de bots).
-
-Le *Random Forest s'impose* comme le meilleur classifieur dans notre contexte : `F1` de 0,788 contre 0,667 pour le SVM, et surtout un `recall` de 0,929, ce qui signifie qu'il ne laisse passer que 1 bot sur 14. C'est l'avantage clef pour notre use case de détection de bots, où un faux négatif (un bot non détecté) est plus problématique qu'un faux positif (un humain signalé à tort). Le SVM, lui, produit une frontière de décision plus conservative dans l'espace PCA, ce qui explique son `recall` plus faible (0,714). Son *AUC de 0,933* montre qu'il ordonne bien les profils par risque, mais son seuil de décision par défaut n'est pas optimal pour notre objectif.
-
-=== Point de vigilance
-Cela dit, les deux modèles partagent une limite *commune* et *fondamentale* : la *qualité des labels* sur lesquels ils ont été entraînés. La labellisation des 420 profils a été réalisée *manuellement*, en s'appuyant sur certaines heuristiques (ratio de retweets, sources automatisées, fréquence de tweets, personnalisation du profil, fréquence des tweets, ...). Cette démarche est inévitablement subjective : deux annotateurs pourraient classer différemment un profil actif mais atypique. Certains bots discrets pu être étiquetés humains, et inversement. Dans ce contexte, les scores obtenus reflètent autant la cohérence du modèle avec nos propres critères d'annotation que sa capacité à détecter des bots réels. Un modèle avec un `recall` de 0,93 peut simplement avoir appris à reproduire fidèlement nos biais d'annotation.
-
-=== Pour conclure
-En résumé, le *Random Forest* est l'approche à privilégier pour la détection de bots, mais ses performances doivent être interprétées avec prudence : elles sont plafonnées par la qualité et la subjectivité de notre ground truth.
+Cette AUC élevée nuance le F1 de $0.667$ observé au seuil par défaut : le modèle ordonne bien les profils par risque, mais son point de fonctionnement naturel n'est pas optimal pour notre use case. En abaissant le seuil de décision, on pourrait augmenter le recall au-delà de $0.714$ au prix d'une précision réduite.
 
 #pagebreak()
 
@@ -742,7 +718,7 @@ Le cluster 1 est le plus suspect, avec environ la moitié de bots, mais il ne r�
 
 == Bilan des modèles
 
-Les modèles donnent des résultats assez cohérents avec ce qu'on pouvait attendre. Le Random Forest est le plus efficace quand on veut prédire directement le label bot/humain, car il apprend la frontière à partir de nos annotations. Les méthodes non-supervisées, elles, sont plus exploratoires : elles font ressortir des zones de profils suspects, mais elles ne remplacent pas un modèle supervisé pour prendre une décision profil par profil.
+Les modèles donnent des résultats assez cohérents avec ce qu'on pouvait attendre. Le Random Forest est le plus efficace quand on veut prédire directement le label bot/humain, car il apprend la frontière à partir de nos annotations. Le SVM fournit une comparaison supervisée intéressante : il discrimine bien les profils selon l'AUC, mais son seuil par défaut est moins adapté à une détection exhaustive. Les méthodes non-supervisées, elles, sont plus exploratoires : elles font ressortir des zones de profils suspects, mais elles ne remplacent pas un modèle supervisé pour prendre une décision profil par profil.
 
 #table(
   columns: (auto, auto, auto, auto, auto),
@@ -753,7 +729,7 @@ Les modèles donnent des résultats assez cohérents avec ce qu'on pouvait atten
   [Spectral clustering], [0,831], [0,508], [0,444], [0,474],
 )
 
-Le Random Forest a surtout l'avantage d'un recall élevé : il retrouve 13 bots sur 14 dans le test set. C'est le comportement que l'on préfère dans notre cas d'usage, parce qu'un faux positif humain peut être revérifié, alors qu'un bot qui passe sous le radar reste actif. La precision plus faible veut simplement dire que le modèle est un peu agressif dans sa détection.
+Le Random Forest a surtout l'avantage d'un recall élevé : il retrouve 13 bots sur 14 dans le test set. C'est le comportement que l'on préfère dans notre cas d'usage, parce qu'un faux positif humain peut être revérifié, alors qu'un bot qui passe sous le radar reste actif. Le SVM est plus prudent : il détecte moins de bots au seuil par défaut, mais son AUC de $0.933$ indique qu'un réglage du seuil pourrait déplacer le compromis vers davantage de recall.
 
 == Random Forest contre clustering
 
