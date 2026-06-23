@@ -125,9 +125,12 @@ Le pipeline s'articule autour de deux tables PostgreSQL :
 - `tweets` : stocke les tweets bruts dans leur intégralité au format JSONB. Un index d'expression est créé sur l'identifiant utilisateur extrait du JSON pour permettre des requêtes performantes par utilisateur.
 - `users` : table relationnelle contenant un enregistrement par utilisateur distinct, avec le snapshot utilisateur le plus récent (dernier tweet connu).
 
-#text(
-  fill: red,
-)[INSÉRER ICI UN SCHÉMA DU PIPELINE : fichiers JSON → ingest.py → tweets → extract_users.py → users. Un diagramme simple fait avec Draw.io ou Excalidraw suffit.]
+#figure(
+  image("img/architecture-etl.svg", width: 108%),
+  caption: [Architecture de dépendances : donnée brute, ingestion, VPS PostgreSQL et modélisation]
+)
+
+Ce schéma résume le choix principal du projet : la donnée brute est lue par un script d'ingestion, puis envoyée vers PostgreSQL, hébergé sur le VPS DigitalOcean. Les transformations utiles au ML partent ensuite de cette base : `tweets` sert à construire `users`, puis `user_features`. Les modèles ne consomment donc pas directement les fichiers JSON : ils utilisent les features calculées depuis PostgreSQL et jointes aux labels.
 
 == Extraction : ingestion des tweets (`ingest.py`)
 
@@ -188,9 +191,7 @@ Le script `src/etl/load/load_users.py` orchestre l'ensemble du pipeline :
 
 Un mécanisme de *checkpoint* (fichier pickle) sauvegarde la liste extraite avant l'upsert. En cas d'échec, le prochain lancement recharge le pickle et saute l'extraction, évitant ainsi de perdre 25 minutes de calcul.
 
-#text(
-  fill: red,
-)[COMPLÉTER : indiquez le temps d'exécution total du chargement, le nombre d'utilisateurs chargés, et mentionnez les difficultés rencontrées (volume de données, sérialisation JSONB, transactions PostgreSQL).]
+Sur le corpus complet, cette étape alimente la table `users` avec plus de *1,8 million d'utilisateurs distincts*. Le point le plus coûteux n'est pas l'insertion SQL elle-même mais la traversée des 4,5 millions de tweets, l'extraction des objets `user` imbriqués et leur sérialisation en `JSONB`. Le chargement par lots de 50 000 lignes limite la taille des transactions PostgreSQL et rend le processus reprenable : en pratique, le checkpoint évite de relancer une extraction d'environ 25 minutes en cas d'erreur pendant l'upsert.
 
 == Indexation pour la performance
 
@@ -598,7 +599,7 @@ Contrairement au Random Forest, le SVM est sensible à l'échelle et à la corr�
 La sélection du nombre de composantes à conserver a été faite automatiquement en fixant un *seuil de variance expliquée cumulée à 95%*. Sur les 31 composantes possibles, *23 suffisent à capturer 95% de l'information*, comme le montre le graphique ci-dessous. Les 8 composantes restantes ne portent que du bruit marginal et auraient risqué de dégrader les performances du SVM.
 
 #figure(
-  image("img/svm-pca-loadings.png", width: 60%),
+  image("img/svm-pca-loadings.png", width: 55%),
   caption: [Variance expliquée par composante principale — 23 composantes retenues sur 31 au seuil de 95%]
 )
 
@@ -613,12 +614,11 @@ Les paramètres de cette grille comprenaient notamment :
 
 Par défaut, la pondération de classes (`class_weight`), dû à l'asymétrie Humains/Bots, a été faite avec l'hyperparamètre `balanced`.
 
-#pagebreak()
 
 Pour rester sur les mêmes base que pour le Random Forest afin que les comparaison soit coohérente, l'optimisation a été faite de la même manière. L'unique boussole d'apprentissage a été cette fois aussi non pas la précision (*Accuracy*), mais le `F1-score`.
 
 #figure(
-  image("img/Score_F1_SVM.png", width: 70%),
+  image("img/Score_F1_SVM.png", width:70%),
   caption: [Résultat du GridSeachCV]
 )
 
@@ -636,7 +636,7 @@ On peut toutefois examiner les loadings des composantes principales pour identif
 
 Ces axes rejoignent les features identifiées comme importantes par le Random Forest (activité, graphe social, comportement), même si le chemin pour y arriver est moins direct.
 
-#pagebreak()
+
 
 === Évaluation
 
@@ -664,13 +664,13 @@ La courbe ROC (Receiver Operating Characteristic) complète l'analyse de la matr
 Notre SVM obtient une *AUC de 0,933*, ce qui signifie que dans 93,3 % des cas, il attribue un score de décision plus élevé à un vrai bot qu'à un vrai humain. C'est un indicateur de bonne *discrimination globale*, indépendamment du seuil choisi.
 
 #figure(
-  image("img/svm-roc-curve.png", width: 70%),
+  image("img/svm-roc-curve.png", width: 69%),
   caption: [Courbe ROC du modèle SVM — AUC = 0,933]
 )
 
 Cette AUC élevée nuance le F1 de 0,667 observé au seuil par défaut : le modèle *sait* bien ordonner les profils par risque, mais son point de fonctionnement naturel n'est pas optimal pour notre use case. En abaissant le seuil de décision, on pourrait augmenter le recall au-delà de 0,71 au prix d'une précision réduite.
 
-#pagebreak()
+
 
 == Conclusion
 
@@ -748,11 +748,10 @@ Les modèles donnent des résultats assez cohérents avec ce qu'on pouvait atten
   columns: (auto, auto, auto, auto, auto),
   table.header([Méthode], [Accuracy], [Precision], [Recall], [F1]),
   [Random Forest], [0,917], [0,684], [0,929], [0,788],
+  [SVM], [0,881], [0,625], [0,714], [0,667],
   [MiniBatch K-means], [0,750], [0,394], [0,847], [0,537],
   [Spectral clustering], [0,831], [0,508], [0,444], [0,474],
 )
-
-#text(fill: red)[À compléter : ajouter la ligne SVM dans ce tableau.]
 
 Le Random Forest a surtout l'avantage d'un recall élevé : il retrouve 13 bots sur 14 dans le test set. C'est le comportement que l'on préfère dans notre cas d'usage, parce qu'un faux positif humain peut être revérifié, alors qu'un bot qui passe sous le radar reste actif. La precision plus faible veut simplement dire que le modèle est un peu agressif dans sa détection.
 
@@ -810,12 +809,13 @@ La suite logique serait d'élargir l'annotation, puis de tester plus sérieuseme
 
 = Bibliographie
 
-#text(fill: red)[COMPLÉTER : mettre en forme selon le style APA ou IEEE.]
-
 - Benevenuto, F., Magno, G., Rodrigues, T., & Almeida, V. (2010). Detecting spammers on Twitter. *Proceedings of the 7th Annual Collaboration, Electronic Messaging, Anti-Abuse and Spam Conference (CEAS)*.
-- Chu, Z., Gianvecchio, S., Wang, H., & Jajodia, S. (2012). Detecting automation of Twitter accounts: Are you a human, bot, or cyborg? *IEEE Transactions on Dependable and Secure Computing*, 9(6), 811-824.
-- Ferrara, E., Varol, O., Davis, C., Menczer, F., & Flammini, A. (2016). The rise of social bots. *Communications of the ACM*, 59(7), 96-104.
+- Breiman, L. (2001). Random forests. *Machine Learning, 45*(1), 5-32.
+- Chu, Z., Gianvecchio, S., Wang, H., & Jajodia, S. (2012). Detecting automation of Twitter accounts: Are you a human, bot, or cyborg? *IEEE Transactions on Dependable and Secure Computing, 9*(6), 811-824.
+- Cortes, C., & Vapnik, V. (1995). Support-vector networks. *Machine Learning, 20*(3), 273-297.
+- Ferrara, E., Varol, O., Davis, C., Menczer, F., & Flammini, A. (2016). The rise of social bots. *Communications of the ACM, 59*(7), 96-104.
+- Lloyd, S. (1982). Least squares quantization in PCM. *IEEE Transactions on Information Theory, 28*(2), 129-137.
+- Ng, A. Y., Jordan, M. I., & Weiss, Y. (2002). On spectral clustering: Analysis and an algorithm. *Advances in Neural Information Processing Systems, 14*.
+- Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B., Grisel, O., Blondel, M., Prettenhofer, P., Weiss, R., Dubourg, V., Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M., & Duchesnay, E. (2011). Scikit-learn: Machine learning in Python. *Journal of Machine Learning Research, 12*, 2825-2830.
 - Perez, C., Lemercier, M., Birregah, B., & Corpel, A. (2011). SPOT 1.0: Scoring Suspicious Profiles On Twitter. *Proceedings of the 2011 International Conference on Advances in Social Networks Analysis and Mining (ASONAM)*, 377-381.
 - Varol, O., Ferrara, E., Davis, C. A., Menczer, F., & Flammini, A. (2017). Online human-bot interactions: Detection, estimation, and characterization. *Proceedings of the 11th International AAAI Conference on Web and Social Media (ICWSM)*, 280-289.
-
-#text(fill: red)[AJOUTER D'AUTRES RÉFÉRENCES PERTINENTES UTILISÉES DANS LE RAPPORT.]
