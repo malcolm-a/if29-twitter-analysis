@@ -581,139 +581,68 @@ Sur l'ensemble de test, le Random Forest obtient une accuracy de $0.917$, une pr
 Cette matrice illustre le compromis de "paranoïa utile" atteint par le modèle lors de la recherche des hyperparamètres. Le poids `balanced` pousse le Random Forest à détecter presque tous les bots, au prix de quelques fausses alertes humaines.
 
 == Modélisation Supervisée : SVM
-En plus du Random Forest, et parce qu'il nous semblait interressant de mettre en pratique ce que nous avons vu en cours, nous avons aussi décider d'implémenter un *modèle de machine à vecteur de support (SVM)*. Pour rappel, le SVM est un modèle qui classifie les données en trouvant une ligne optimale ou un hyperplan (dans un cas non linéairement séparable) permettant de maximiser la distance entre chaque classe dans un espace. 
+En plus du Random Forest, et parce qu'il nous semblait intéressant de mettre en pratique ce que nous avons vu en cours, nous avons aussi décidé d'implémenter un *modèle de machine à vecteurs de support (SVM)*. Pour rappel, le SVM classifie les données en cherchant une frontière de décision qui maximise la marge entre les classes. Dans notre cas, la séparation n'étant pas supposée linéaire, l'intérêt était surtout de tester un modèle à noyau sur les mêmes profils labellisés que le Random Forest.
 
 === Échantillonnage et validation
 Le SVM reprend le même split stratifié que le Random Forest : 336 profils pour l'entraînement et 84 profils pour le test. Cette symétrie permet de comparer les deux modèles sur le même niveau d'information et sur le même déséquilibre de classes.
 
-=== Premier jet
+=== Premier jet et problème de validation
 
-==== Réduction par ACP
-
-Contrairement au Random Forest, le SVM est sensible à l'échelle et à la corrélation des features. Nous avons donc appliqué une *Analyse en Composantes Principales (ACP)* après standardisation (`StandardScaler`), dans le double objectif de décorréler les variables et de réduire le bruit.
-
-La sélection du nombre de composantes à conserver a été faite automatiquement en fixant un *seuil de variance expliquée cumulée à 95%*. Sur les 31 composantes possibles, *23 suffisent à capturer 95% de l'information*, comme le montre le graphique ci-dessous. Les 8 composantes restantes ne portent que du bruit marginal et auraient risqué de dégrader les performances du SVM.
+Contrairement au Random Forest, le SVM est sensible à l'échelle et à la corrélation des features. Nous avons donc commencé par standardiser les variables avec `StandardScaler`, puis par appliquer une *Analyse en Composantes Principales (ACP)* afin de décorréler l'espace et de limiter le bruit. Dans ce premier jet, l'ACP était calculée sur l'ensemble de `X_train` avant la recherche d'hyperparamètres, puis un `GridSearchCV` optimisait le noyau et le coefficient `C` du SVM avec le F1-score comme métrique.
 
 #figure(
-  image("img/svm-pca-loadings.png", width: 55%),
+  image("img/svm-pca-loadings.png", width: 50%),
   caption: [Variance expliquée par composante principale — 23 composantes retenues sur 31 au seuil de 95%]
 )
 
-==== Optimisation des hyperparamètres
-Lors de notre analyse des données, nous avions eu une première intuition qui était que notre cas d'étude ne serait pas linéairement séparable, donc que par défaut nous n'utiliserions pas de *noyau linéaire*.
+Cette version donnait un résultat correct sur le test set, avec une accuracy de $0.881$, une precision de $0.625$, un recall de $0.714$ et un F1-score de $0.667$. Elle a surtout servi de diagnostic : le modèle détectait 10 bots sur 14, mais générait encore 6 faux positifs humains. Le problème principal venait de la validation croisée. Comme l'ACP était ajustée avant le découpage interne du `GridSearchCV`, les folds de validation influençaient déjà la projection PCA. Les scores de validation étaient donc légèrement optimistes.
 
-Dans l'objectif de trouver les meilleurs hyperparamètres, nous avons mis en place une exploration des hyperparamètres via une recherche sur grille exhaustive (`GridSeachCV`).
-
-Les paramètres de cette grille comprenaient notamment :
-- Le type de noyau (`kernel`).
-- Le coefficient de régularisation inversé (`C`).
-
-Par défaut, la pondération de classes (`class_weight`), dû à l'asymétrie Humains/Bots, a été faite avec l'hyperparamètre `balanced`.
-
-
-Pour rester sur les mêmes base que pour le Random Forest afin que les comparaison soit coohérente, l'optimisation a été faite de la même manière. L'unique boussole d'apprentissage a été cette fois aussi non pas la précision (*Accuracy*), mais le `F1-score`.
-
-#figure(
-  image("img/Score_F1_SVM.png", width:70%),
-  caption: [Résultat du GridSeachCV]
-)
-
-Pour le cas de notre SVM, on remarque que les meilleurs paramètres trouvé par le GridSeachCV sont :
-- Le noyau `rbf`.
-- Un coefficient de régularisation inversé égale à *0.747*.
-
-Notre intuition lors de l'analyse des données à été bonne, et ça nous donne un score F1 maximisé à 0.727.
-
-
-==== Importance des features
-Contrairement au Random Forest, le SVM avec noyau RBF n'expose pas directement d'importance des features. La décision repose sur des distances dans un espace de haute dimension transformé par la PCA (31 → 23 composantes), ce qui rend l'interprétation par variable moins immédiate.
+Le SVM avec noyau RBF n'expose pas directement d'importance des features. La décision repose sur des distances dans un espace de haute dimension transformé par la PCA (31 → 23 composantes), ce qui rend l'interprétation par variable moins immédiate.
 
 On peut toutefois examiner les loadings des composantes principales pour identifier quelles features structurent l'espace dans lequel le SVM trace son hyperplan. La composante dominante (`PC1`, 13,9 % de variance) est portée par `description_length`, `retweet_rate`, `has_description` et `account_age_days`, des signaux de personnalisation et de comportement. La PC2 (9,2 %) capture la densité d'activité dans le corpus (`tweet_count`, `tweets_per_day_in_dataset`). La PC4 (5,5 %) est quasi exclusivement portée par `bot_source_ratio` (loading 0,74), ce qui signale une dimension très discriminante liée aux sources automatisées.
 
 Ces axes rejoignent les features identifiées comme importantes par le Random Forest (activité, graphe social, comportement), même si le chemin pour y arriver est moins direct.
 
+=== Pipeline corrigé
 
-==== Évaluation - Matrice de confusion
+Pour corriger cette fuite de données, nous avons intégré l'ACP et le SVM dans un `Pipeline` scikit-learn passé directement au `GridSearchCV`. À chaque fold, l'ACP est recalculée uniquement sur les folds d'entraînement, puis le fold de validation est projeté avec cette ACP. Le fold de validation ne participe donc plus à la construction de l'espace PCA.
 
-Le GridSearchCV maximise un F1 moyen de $0.727$ en validation croisée. Sur l'ensemble de test, au seuil de décision par défaut, le SVM obtient une accuracy de $0.881$, une precision de $0.625$, un recall de $0.714$ et un F1-score de $0.667$.
-
-#figure(
-  image("img/svm-confusion-matrix.png", width: 67%),
-  caption: [Matrice de confusion du modèle SVM sur l'ensemble de Test]
-)
-
-Cette matrice illustre un comportement plus prudent que le Random Forest : le SVM détecte 10 bots sur 14 tout en générant 6 faux positifs sur 70 non-bots. Le compromis est donc moins agressif que le RF, qui privilégie un recall très élevé au prix de davantage de fausses alertes.
-
-Ce comportement peut s'expliquer par la nature même du SVM : il cherche à maximiser la marge entre les classes dans l'espace PCA, ce qui tend à produire une frontière de décision plus conservative. Dans notre cas d'usage, le recall de $0.714$ reste utile, mais le RF reste préférable si l'on priorise la détection exhaustive.
-
-==== Évaluation - ROC-AUC
-
-La courbe ROC complète l'analyse de la matrice de confusion en évaluant le modèle sur tous les seuils de décision possibles, et non plus uniquement au seuil par défaut $f = 0$. L'aire sous cette courbe, l'*AUC*, résume la capacité du modèle à classer les bots au-dessus des humains dans son score de décision.
-
-Notre SVM obtient une *AUC de 0,933*, ce qui signifie que dans 93,3 % des cas, il attribue un score de décision plus élevé à un vrai bot qu'à un vrai humain. C'est un indicateur de bonne *discrimination globale*, indépendamment du seuil choisi.
+Nous avons aussi remplacé le découpage interne par un `StratifiedKFold(n_splits=10, shuffle=True, random_state=42)`, afin de conserver la proportion de bots dans chaque fold. Le nombre de composantes ACP n'est plus fixé manuellement : il devient un hyperparamètre de la grille, avec les seuils `[0.75, 0.80, 0.85, 0.90, 0.95, "mle"]`. Le noyau `sigmoid`, instable dans cette configuration, a été retiré de la grille.
 
 #figure(
-  image("img/svm-roc-curve.png", width: 67%),
-  caption: [Courbe ROC du modèle SVM — AUC = 0,933]
+  image("img/Score_F1_SVM.png", width:90%),
+  caption: [Résultat du GridSeachCV]
 )
 
-Cette AUC élevée nuance le F1 de $0.667$ observé au seuil par défaut : le modèle ordonne bien les profils par risque, mais son point de fonctionnement naturel n'est pas optimal pour notre use case. En abaissant le seuil de décision, on pourrait augmenter le recall au-delà de $0.714$ au prix d'une précision réduite.
+Le meilleur pipeline retient finalement `n_components = "mle"`, soit 30 composantes sur 31, un noyau `poly`, `C = 3.333`, et un F1 moyen de $0.7489$ en validation croisée.
 
-==== Problèmes rencontrées
+=== Résultats
 
-En analysant les résultats, trois problèmes distincts ont été identifiés dans notre premier jet.
-
-Le premier, et le plus structurel, est une *fuite de données* (_data leakage_). L'ACP avait été calculée sur l'intégralité de `X_train` *avant* que le GridSearchCV ne découpe les folds. Les directions des composantes principales encodaient donc de l'information issue des folds de validation — ceux-ci n'étaient plus réellement invisibles au modèle lors de l'évaluation. Concrètement, lorsque nous avons testé un seuil ACP à 80 % à la place de 95 %, le score F1 en validation croisée semblait s'améliorer. Ce gain était en réalité un artefact : en supprimant des composantes de faible variance, on réduisait la quantité d'information "fuie" depuis les folds de validation, ce qui donnait l'illusion d'une meilleure généralisation.
-
-Le deuxième problème concerne la stratification des folds. Le GridSearchCV utilisait un KFold standard, qui découpe les données sans garantir la proportion de bots dans chaque fold. Avec seulement ~17 % de bots dans le jeu d'entraînement, certains folds pouvaient se retrouver avec très peu de bots, rendant l'estimation du F1 très instable.
-
-Le troisième problème est d'ordre technique : le noyau `sigmoid` inclus dans la grille de recherche produisait des échecs silencieux lors du fit sur certains folds. Ce noyau n'est pas défini positif, ce qui peut faire planter la validation interne de sklearn. Les 180 fits échoués (sur 1800 au total) correspondaient aux combinaisons impliquant ce noyau.
-
-=== Corrections apportées
-
-==== Intégration de l'ACP dans un Pipeline
-
-La correction principale consiste à encapsuler l'ACP et le SVM dans un `Pipeline` scikit-learn, puis à passer ce pipeline directement au GridSearchCV.
-
-Ce changement modifie fondamentalement le déroulement de la validation croisée. À chaque fold, le pipeline repart de zéro : il refait l'ACP *uniquement* sur les folds d'entraînement, projette ensuite le fold de validation avec cette ACP, puis entraîne et évalue le SVM. Le fold de validation n'a donc jamais influencé la projection, plus de fuite. Les scores CV obtenus sont désormais des estimations correctes.
-
-==== Utilisation du StratifiedKFold
-
-Le KFold standard est remplacé par un `StratifiedKFold(n_splits=10, shuffle=True, random_state=42)`. La stratification garantit que chaque fold de validation contient la même proportion de bots que le jeu d'entraînement global (\~17 %). Cela stabilise l'estimation du F1 : sans stratification, un fold avec 0 ou 1 bot peut produire un F1 de 0 par manque de signal, biaisant la moyenne vers le bas.
-
-Passer de 5 à 10 folds réduit en outre la variance de l'estimateur CV, au prix d'un temps de calcul doublé, ce qui reste acceptable avec seulement 336 samples.
-
-==== Optimisation du nombre de composantes ACP
-
-Plutôt que de fixer le seuil de variance manuellement, `n_components` est intégré comme hyperparamètre dans la grille : `[0.75, 0.80, 0.85, 0.90, 0.95, "mle"]`. L'option `"mle"` applique le critère de Minka, qui estime automatiquement la frontière signal/bruit par maximum de vraisemblance, sans nécessiter de seuil arbitraire.
-
-Dans le cadre propre du pipeline (sans fuite), le critère `mle` est sélectionné comme optimal et retient *30 composantes sur 31*. Ce résultat confirme a posteriori que le gain apparent à 80 % dans la première approche était bien un artefact de la fuite : avec une évaluation honnête, la quasi-totalité des composantes s'avère utile.
-
-==== Suppression du noyau sigmoid
-
-Le noyau `sigmoid` a été retiré de la grille. En pratique, il est rarement utilisé en classification binaire. Après nous êtres renseigné, les noyaux `rbf` et `poly` couvrent les mêmes cas d'usage avec une meilleure stabilité numérique.
-
-=== Résultats finaux
-
-Après application de l'ensemble des corrections, le GridSearchCV sur 1 200 candidats avec 10 folds stratifiés identifie les hyperparamètres optimaux suivants :
-
-- *n_components* : `mle` → 30 composantes retenues sur 31
-- *Noyau* : `poly`
-- *C* : 4,000
-- *F1 en validation croisée* : *0,7592*
-
-Le gain par rapport au premier jet (F1 CV = 0,727) est modeste mais significatif, et cette fois-ci honnête : il n'est plus gonflé par la fuite de données. Le passage au noyau `poly` à la place de `rbf` s'explique par la nature des données une fois la fuite corrigée — le noyau polynomial capture mieux les interactions entre composantes dans un espace proprement décorrélé.
+Le gain par rapport au premier jet reste modéré, mais il est plus fiable parce qu'il n'est plus gonflé par la fuite de données. Sur le test set, le pipeline corrigé obtient une accuracy de $0.929$, une precision de $0.833$, un recall de $0.714$ et un F1-score de $0.769$.
 
 #table(
   columns: (auto, auto, auto, auto, auto),
   table.header([Modèle], [Accuracy], [Precision], [Recall], [F1 test]),
-  [Premier jet (rbf, 95%)], [0,881], [0,625], [0,714], [0,667],
+  [Premier jet], [0,881], [0,625], [0,714], [0,667],
   [Pipeline corrigé (poly, mle)], [*0,929*], [*0,833*], [0,714], [*0,769*],
 )
 
-Sur l'ensemble de test, le pipeline corrigé obtient un F1 de *0,769*, soit un gain de +10 points par rapport au premier jet. Ce gain provient quasi-exclusivement de la *précision*, qui passe de 0,625 à 0,833 : le modèle génère seulement 2 faux positifs au lieu de 6, sans pour autant détecter plus de bots (le recall reste à 0,714 dans les deux cas). Le noyau `poly`, sélectionné une fois la fuite corrigée, trace une frontière plus précise qui évite de classer des humains actifs comme bots.
+Ce gain vient presque uniquement de la precision, qui passe de $0.625$ à $0.833$ : le modèle génère seulement 2 faux positifs au lieu de 6, sans détecter plus de bots. Le recall reste à $0.714$ dans les deux cas, soit 10 bots détectés sur 14.
 
-Le SVM corrigé reste néanmoins en retrait par rapport au Random Forest (F1 test = 0,788, recall = 0,929). Dans notre use case, où manquer un bot est plus coûteux que signaler une fausse alerte, le RF garde l'avantage. Le SVM constitue toutefois une alternative solide lorsqu'on souhaite minimiser les faux positifs — par exemple dans un contexte où les actions correctives (suspension de compte) ont un coût élevé.
+#figure(
+  image("img/confusion_and_PCA_final.png", width: 90%),
+  caption: [Matrice de confusion finale et meilleur F1 CV par seuil de variance PCA]
+)
+
+La courbe ROC complète cette lecture en évaluant le modèle sur tous les seuils de décision possibles. Le pipeline corrigé obtient une AUC de $0.870$, ce qui confirme une discrimination correcte, mais moins nette que ce que le premier jet laissait penser.
+
+#figure(
+  image("img/svm-roc-curve.png", width: 67%),
+  caption: [Courbe ROC du pipeline SVM corrigé, AUC = 0,870]
+)
+
+Le SVM corrigé reste donc en retrait par rapport au Random Forest pour notre objectif principal : le RF retrouve 13 bots sur 14, contre 10 sur 14 pour le SVM. En revanche, le SVM corrigé est plus conservateur et limite mieux les faux positifs. Il peut donc être intéressant si l'action associée à une détection est coûteuse, par exemple une suspension de compte, mais le Random Forest reste plus adapté si l'on priorise la détection exhaustive.
+
 
 #pagebreak()
 
@@ -772,18 +701,18 @@ Le cluster 1 est le plus suspect, avec environ la moitié de bots, mais il ne r�
 
 == Bilan des modèles
 
-Les modèles donnent des résultats assez cohérents avec ce qu'on pouvait attendre. Le Random Forest est le plus efficace quand on veut prédire directement le label bot/humain, car il apprend la frontière à partir de nos annotations. Le SVM fournit une comparaison supervisée intéressante : il discrimine bien les profils selon l'AUC, mais son seuil par défaut est moins adapté à une détection exhaustive. Les méthodes non-supervisées, elles, sont plus exploratoires : elles font ressortir des zones de profils suspects, mais elles ne remplacent pas un modèle supervisé pour prendre une décision profil par profil.
+Les modèles donnent des résultats assez cohérents avec ce qu'on pouvait attendre. Le Random Forest est le plus efficace quand on veut prédire directement le label bot/humain, car il apprend la frontière à partir de nos annotations. Le SVM corrigé fournit une comparaison supervisée intéressante : il réduit fortement les faux positifs, mais reste moins bon que le RF pour retrouver tous les bots. Les méthodes non-supervisées, elles, sont plus exploratoires : elles font ressortir des zones de profils suspects, mais elles ne remplacent pas un modèle supervisé pour prendre une décision profil par profil.
 
 #table(
   columns: (auto, auto, auto, auto, auto),
   table.header([Méthode], [Accuracy], [Precision], [Recall], [F1]),
   [Random Forest], [0,917], [0,684], [0,929], [0,788],
-  [SVM], [0,881], [0,625], [0,714], [0,667],
+  [SVM corrigé], [0,929], [0,833], [0,714], [0,769],
   [MiniBatch K-means], [0,750], [0,394], [0,847], [0,537],
   [Spectral clustering], [0,831], [0,508], [0,444], [0,474],
 )
 
-Le Random Forest a surtout l'avantage d'un recall élevé : il retrouve 13 bots sur 14 dans le test set. C'est le comportement que l'on préfère dans notre cas d'usage, parce qu'un faux positif humain peut être revérifié, alors qu'un bot qui passe sous le radar reste actif. Le SVM est plus prudent : il détecte moins de bots au seuil par défaut, mais son AUC de $0.933$ indique qu'un réglage du seuil pourrait déplacer le compromis vers davantage de recall.
+Le Random Forest a surtout l'avantage d'un recall élevé : il retrouve 13 bots sur 14 dans le test set. C'est le comportement que l'on préfère dans notre cas d'usage, parce qu'un faux positif humain peut être revérifié, alors qu'un bot qui passe sous le radar reste actif. Le SVM corrigé est plus prudent : il détecte 10 bots sur 14, mais avec seulement 2 faux positifs. Son AUC de $0.870$ confirme une discrimination correcte, sans renverser l'avantage opérationnel du Random Forest.
 
 == Random Forest contre clustering
 
@@ -807,7 +736,7 @@ Une idée complémentaire que nous avons eu est celle d'exploiter la principale 
 
 L'idée qui en découle est de calculer des embeddings vectoriels des tweets, et ensuite de mesurer la distance entre ces embeddings pour chaque utilisateur. Cela permettrait de quantifier la répétition sémantique : un bot répète souvent les mêmes idées ou reste dans un espace thématique étroit, tandis qu'un humain varie davantage. Cette addition en tant que composante principale de notre analyse est très intéressante, mais elle nécessite un temps de développement et de calcul important si on veut explorer les 4.5 millions de tweets. Il ne nous est donc pas possible de le faire sérieusement dans le cadre de ce projet.
 
-Cependant, pour aller un peu plus loin, nous avons lancé un _Proof Of Concepot_ avec l'aide de #emph("Codex") (harness et modèle d'OpenAI) séparé sur les 420 profils labellisés. L'idée était de créer des embeddings des tweets avec `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, puis de calculer des métriques de répétition sémantique par utilisateur.
+Cependant, pour aller un peu plus loin, nous avons lancé un _Proof Of Concept_ avec l'aide de #emph("Codex") (harness et modèle d'OpenAI) séparé sur les 420 profils labellisés. L'idée était de créer des embeddings des tweets avec `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, puis de calculer des métriques de répétition sémantique par utilisateur.
 
 Ce POC a été gardé à part dans `src/ml/semantic_poc/`, justement pour ne pas le mélanger avec le coeur du rapport. Sur le même split que le Random Forest, l'ajout de ces features améliore légèrement les scores : accuracy de 0,917 à 0,929, recall de 0,929 à 1,000, et F1 de 0,788 à 0,824.
 
