@@ -125,9 +125,12 @@ Le pipeline s'articule autour de deux tables PostgreSQL :
 - `tweets` : stocke les tweets bruts dans leur intégralité au format JSONB. Un index d'expression est créé sur l'identifiant utilisateur extrait du JSON pour permettre des requêtes performantes par utilisateur.
 - `users` : table relationnelle contenant un enregistrement par utilisateur distinct, avec le snapshot utilisateur le plus récent (dernier tweet connu).
 
-#text(
-  fill: red,
-)[INSÉRER ICI UN SCHÉMA DU PIPELINE : fichiers JSON → ingest.py → tweets → extract_users.py → users. Un diagramme simple fait avec Draw.io ou Excalidraw suffit.]
+#figure(
+  image("img/architecture-etl.svg", width: 108%),
+  caption: [Architecture de dépendances : donnée brute, ingestion, VPS PostgreSQL et modélisation]
+)
+
+Ce schéma résume le choix principal du projet : la donnée brute est lue par un script d'ingestion, puis envoyée vers PostgreSQL, hébergé sur le VPS DigitalOcean. Les transformations utiles au ML partent ensuite de cette base : `tweets` sert à construire `users`, puis `user_features`. Les modèles ne consomment donc pas directement les fichiers JSON : ils utilisent les features calculées depuis PostgreSQL et jointes aux labels.
 
 == Extraction : ingestion des tweets (`ingest.py`)
 
@@ -188,9 +191,7 @@ Le script `src/etl/load/load_users.py` orchestre l'ensemble du pipeline :
 
 Un mécanisme de *checkpoint* (fichier pickle) sauvegarde la liste extraite avant l'upsert. En cas d'échec, le prochain lancement recharge le pickle et saute l'extraction, évitant ainsi de perdre 25 minutes de calcul.
 
-#text(
-  fill: red,
-)[COMPLÉTER : indiquez le temps d'exécution total du chargement, le nombre d'utilisateurs chargés, et mentionnez les difficultés rencontrées (volume de données, sérialisation JSONB, transactions PostgreSQL).]
+Sur le corpus complet, cette étape alimente la table `users` avec plus de *1,8 million d'utilisateurs distincts*. Le point le plus coûteux n'est pas l'insertion SQL elle-même mais la traversée des 4,5 millions de tweets, l'extraction des objets `user` imbriqués et leur sérialisation en `JSONB`. Le chargement par lots de 50 000 lignes limite la taille des transactions PostgreSQL et rend le processus reprenable : en pratique, le checkpoint évite de relancer une extraction d'environ 25 minutes en cas d'erreur pendant l'upsert.
 
 == Indexation pour la performance
 
@@ -209,6 +210,8 @@ Ces index permettent à PostgreSQL d'utiliser des parcours d'index (index scan) 
 == Validation expérimentale : comparaison MongoDB vs PostgreSQL
 
 Afin de valider objectivement notre choix de système de stockage, nous avons implémenté une pipeline identique avec MongoDB (v7.0) et comparé les performances sur les trois étapes critiques : ingestion, calcul des features utilisateur et fetch des utilisateurs enrichis. Les tests ont été réalisés sur un sous-ensemble croissant de fichiers (1, 20 et 50 fichiers, soit jusqu'à 100 000 tweets) avec des lots d'insertion de 2 000 documents (1 insertion par fichier).
+
+#pagebreak()
 
 === Performance d'ingestion
 
@@ -314,7 +317,7 @@ Pour chaque utilisateur, le CSV exporté contient : les *métadonnées du profil
 Le tableau ci-dessous détaille les indicateurs clés mis à disposition de l'annotateur.
 
 #table(
-  columns: (auto, auto, auto),
+  columns: (4fr, 3fr, 4fr),
   table.header([*Colonne*], [*Signification*], [*Utilisation*]),
   [followers_count], [Nombre d'abonnés], [Un compte avec 0 followers et beaucoup de tweets est suspect],
   [friends_count], [Abonnements (following)], [Un ratio followers/friends très déséquilibré (>5) suggère un bot],
@@ -357,7 +360,6 @@ Ces indicateurs portent sur les métadonnées du compte, indépendamment de son 
 - Une *date de création récente* couplée à un volume de statuts anormalement élevé (ex. compte créé il y a 3 mois avec 50 000 tweets).
 
 
-#pagebreak()
 
 === Indicateurs d'activité (Activity-based features)
 
@@ -365,6 +367,8 @@ Ces indicateurs sont calculés à partir de l'activité observée du compte :
 
 - Une *fréquence de publication excessive* : un rythme soutenu de plus de 50 tweets par jour, maintenu sur une longue période, dépasse les capacités humaines. Le papier SPOT (Perez et al., 2011) qualifie ce phénomène de *degré d'agressivité*.
 - Une *présence massive d'URLs* dans les tweets : les bots diffusent souvent des liens raccourcis à des fins de spam ou de phishing.
+
+#pagebreak()
 
 === Indicateurs de contenu (Content-based features)
 
@@ -530,15 +534,18 @@ L'approche de mise à l'échelle (*scaling*) n'est pas universelle. Dans ce proj
 - Pour le modèle de *Forêts Aléatoires (Random Forest)*, aucune standardisation (`StandardScaler`) n'a été appliquée. Les algorithmes d'arbres partitionnent l'espace de manière orthogonale en divisant les fonctionnalités sur des seuils de décision (ex: $X > 100$). Une transformation monotone ou affine ne change pas la structure des nœuds ; elle est complètement invariante à l'échelle.
 - À l'inverse, l'approche par *Machine à Vecteurs de Support (SVM)*, explorée par la suite, ainsi que le *Clustering*, reposent formellement sur le calcul matriciel de distances euclidiennes. Sur ces derniers, un espace de variables déséquilibré fausse l'hyperplan optimal. Il requiert un processus de standardisation systématique des caractéristiques, voire parfois une transformation logarithmique (*log1p*) sur les données comportant de grandes disproportions et d'importantes asymétries de distribution statistiques (*heavy-tailed data*).
 
+=== Cadre commun d'évaluation
+Les modèles supervisés ont été entraînés et évalués dans les mêmes conditions : 420 profils labellisés, un split stratifié 80% entraînement / 20% test, une validation croisée stratifiée à 5 plis sur l'entraînement, et une pondération `class_weight = "balanced"` pour tenir compte du déséquilibre de classes, avec environ 17% de bots.
+
+L'ensemble de test est resté invisible pendant l'entraînement. Les résultats sont ensuite lus à partir de la matrice de confusion et de quatre métriques : l'accuracy mesure la proportion globale de prédictions correctes, la precision indique la part de vrais bots parmi les profils signalés comme bots, le recall mesure la part de bots réellement retrouvés, et le F1-score synthétise precision et recall par moyenne harmonique. Dans notre cas d'usage, le recall est prioritaire : un humain faussement signalé peut être revérifié, alors qu'un bot non détecté reste actif.
+
 == Modélisation Supervisée : Random Forest
 
 Pour expérimenter la classification supervisée, nous avons retenu l'algorithme *Random Forest* (Forêts Aléatoires). Ce modèle ensembliste repose sur la construction d'un grand nombre d'arbres de décision appliqués sur des sous-échantillons aléatoires. Il est naturellement robuste face au sur-apprentissage et accommode sans heurt un ensemble hétéroclite de features.
 
 === Échantillonnage et validation
-Compte tenu du net déséquilibre de nos classes (17% de bots pour 83% d'humains), nous devions éviter d'avoir par hasard une représentation nulle des bots dans nos ensembles de validation. 
-Le jeu de données a été scindé à l'aide de la fonction `train_test_split` avec les proportions 80% (Entraînement - `X_train`) et 20% (Test - `X_test`), en spécifiant un argument de *stratification*. Cette précaution garantit mathématiquement que la distribution initiale des classes est honorée dans chacun des échantillons.
+Pour le Random Forest, le split commun décrit plus haut a été réalisé avec `train_test_split` en conservant la stratification. Cette précaution évite qu'un sous-ensemble de validation ou de test contienne trop peu de bots, ce qui fausserait fortement la lecture du recall et du F1-score.
 
-#pagebreak()
 
 === Optimisation des hyperparamètres
 Afin d'ajuster finement les performances du Random Forest, nous avons mis en place une exploration des hyperparamètres via une recherche sur grille exhaustive (`GridSearchCV`).
@@ -555,7 +562,7 @@ L'optimisation a été pilotée en validation croisée stratifiée sur le sous-e
 Un avantage pratique du Random Forest est qu'il donne une forme d'explicabilité assez directe via `feature_importances_`. L'idée n'est pas de dire qu'une variable "cause" le label bot, mais de mesurer quelles variables ont le plus souvent permis aux arbres de faire des séparations utiles.
 
 #figure(
-  image("img/rf-feature-importance.png", width: 78%),
+  image("img/rf-feature-importance.png", width: 70%),
   caption: [Features les plus importantes dans le modèle Random Forest]
 )
 
@@ -563,28 +570,79 @@ Dans notre modèle, les variables qui ressortent le plus sont `followers_count`,
 
 C'est aussi pour cette raison que nous n'avons pas utilisé de PCA pour expliquer le Random Forest. Une PCA peut être utile pour visualiser les profils en deux dimensions, mais elle mélange les variables entre elles. Ici, garder les features originales permet de dire plus simplement quels signaux le modèle utilise réellement.
 
-#pagebreak()
-
-=== Évaluation et Matrice de Confusion
-L'évaluation finale de notre modèle s'est faite sur l'ensemble de Test (20% des données), laissé jusque-là parfaitement invisible à l'apprentissage. Afin d'appréhender toute la granularité de ces résultats, particulièrement dans un contexte déséquilibré, nous nous sommes appuyés sur la matrice de confusion usuelle ainsi que sur plusieurs métriques, définies mathématiquement par les taux de Vrais Positifs ($V_p$), Faux Positifs ($F_p$), Vrais Négatifs ($V_n$) et Faux Négatifs ($F_n$) :
-
-- *L'exactitude (Accuracy)* : ratio de prédictions correctes globales : $(V_p + V_n) / "Total"$. Bien qu'élevée à $0.917$ (soit $91.7%$ de bonnes intuitions globales), elle peut s'avérer trompeuse en asymétrie de classes (il "suffit" d'étiqueter systématiquement la classe majoritaire pour obtenir un score honorable).
-- *La précision (Precision)* : $V_p / (V_p + F_p)$. Parmi l'ensemble des comptes signalés comme "Bots" par notre modèle, quelle est la proportion réelle de vrais bots ? Elle s'élève ici à $0.684$.
-- *Le rappel (Recall ou Sensibilité)* : $V_p / (V_p + F_n)$. Parmi tous les bots *existant réellement* dans l'échantillon de test, combien le modèle a-t-il pu en identifier ? Avec notre configuration, cette métrique culmine à $0.929$ (près de $93%$ des bots sont débusqués).
-- *Le F1-Score* : la moyenne harmonique de la précision et du rappel, calculée selon $2 dot (P dot R) / (P + R)$. C'est le juge de paix. Face au déséquilibre de classe, notre modèle a abouti à un très bon score certifié par validation croisée de $0.788$.
+=== Évaluation et matrice de confusion
+Sur l'ensemble de test, le Random Forest obtient une accuracy de $0.917$, une precision de $0.684$, un recall de $0.929$ et un F1-score de $0.788$. La lecture importante est donc moins l'accuracy, naturellement élevée dans un jeu déséquilibré, que le recall : le modèle retrouve 13 bots sur 14.
 
 #figure(
   image("img/rf-confusion-matrix.png", width: 70%),
   caption: [Matrice de confusion du modèle Random Forest sur l'ensemble de Test]
 )
 
-Cette matrice, et en particulier l'excellent score de rappel, illustre le compromis de "paranoïa utile" atteint par le modèle lors de la recherche des hyperparamètres (le poids `balanced` étant retenu). Il s'avère doté d'une redoutable capacité de détection des profils bots isolés, ne laissant s'échapper qu'une infime proportion d'entre eux, acceptant paradoxalement d'inclure quelques fausses alertes humaines en collatéral. 
-
-Si l'on se place dans le business case typique d'une plateforme de réseaux sociaux qui cherche à éliminer le traffic lié aux bots, il est préférable d'avoir recall élevé quitte à avoir plus de faux positifs : l'humain faux positif peut prouver qu'il n'est pas un robot (captcha, code par e-mail, action manuelle), mais un robot qui passe entre les mailles du filet ne sera jamais débusqué.
+Cette matrice illustre le compromis de "paranoïa utile" atteint par le modèle lors de la recherche des hyperparamètres. Le poids `balanced` pousse le Random Forest à détecter presque tous les bots, au prix de quelques fausses alertes humaines.
 
 == Modélisation Supervisée : SVM
+En plus du Random Forest, et parce qu'il nous semblait intéressant de mettre en pratique ce que nous avons vu en cours, nous avons aussi décidé d'implémenter un *modèle de machine à vecteurs de support (SVM)*. Pour rappel, le SVM classifie les données en cherchant une frontière de décision qui maximise la marge entre les classes. Dans notre cas, la séparation n'étant pas supposée linéaire, l'intérêt était surtout de tester un modèle à noyau sur les mêmes profils labellisés que le Random Forest.
 
-#text(fill: red)[À COMPLÉTER : intégrer ici le SVM si on garde l'expérience. L'idée serait de rappeler que le SVM nécessite une standardisation, de donner le noyau retenu, les paramètres principaux, puis les scores accuracy, precision, recall et F1 sur le même split que le Random Forest.]
+=== Échantillonnage et validation
+Le SVM reprend le même split stratifié que le Random Forest : 336 profils pour l'entraînement et 84 profils pour le test. Cette symétrie permet de comparer les deux modèles sur le même niveau d'information et sur le même déséquilibre de classes.
+
+=== Premier jet et problème de validation
+
+Contrairement au Random Forest, le SVM est sensible à l'échelle et à la corrélation des features. Nous avons donc commencé par standardiser les variables avec `StandardScaler`, puis par appliquer une *Analyse en Composantes Principales (ACP)* afin de décorréler l'espace et de limiter le bruit. Dans ce premier jet, l'ACP était calculée sur l'ensemble de `X_train` avant la recherche d'hyperparamètres, puis un `GridSearchCV` optimisait le noyau et le coefficient `C` du SVM avec le F1-score comme métrique.
+
+#figure(
+  image("img/svm-pca-loadings.png", width: 50%),
+  caption: [Variance expliquée par composante principale — 23 composantes retenues sur 31 au seuil de 95%]
+)
+
+Cette version donnait un résultat correct sur le test set, avec une accuracy de $0.881$, une precision de $0.625$, un recall de $0.714$ et un F1-score de $0.667$. Elle a surtout servi de diagnostic : le modèle détectait 10 bots sur 14, mais générait encore 6 faux positifs humains. Le problème principal venait de la validation croisée. Comme l'ACP était ajustée avant le découpage interne du `GridSearchCV`, les folds de validation influençaient déjà la projection PCA. Les scores de validation étaient donc légèrement optimistes.
+
+Le SVM avec noyau RBF n'expose pas directement d'importance des features. La décision repose sur des distances dans un espace de haute dimension transformé par la PCA (31 → 23 composantes), ce qui rend l'interprétation par variable moins immédiate.
+
+On peut toutefois examiner les loadings des composantes principales pour identifier quelles features structurent l'espace dans lequel le SVM trace son hyperplan. La composante dominante (`PC1`, 13,9 % de variance) est portée par `description_length`, `retweet_rate`, `has_description` et `account_age_days`, des signaux de personnalisation et de comportement. La PC2 (9,2 %) capture la densité d'activité dans le corpus (`tweet_count`, `tweets_per_day_in_dataset`). La PC4 (5,5 %) est quasi exclusivement portée par `bot_source_ratio` (loading 0,74), ce qui signale une dimension très discriminante liée aux sources automatisées.
+
+Ces axes rejoignent les features identifiées comme importantes par le Random Forest (activité, graphe social, comportement), même si le chemin pour y arriver est moins direct.
+
+=== Pipeline corrigé
+
+Pour corriger cette fuite de données, nous avons intégré l'ACP et le SVM dans un `Pipeline` scikit-learn passé directement au `GridSearchCV`. À chaque fold, l'ACP est recalculée uniquement sur les folds d'entraînement, puis le fold de validation est projeté avec cette ACP. Le fold de validation ne participe donc plus à la construction de l'espace PCA.
+
+Nous avons aussi remplacé le découpage interne par un `StratifiedKFold(n_splits=10, shuffle=True, random_state=42)`, afin de conserver la proportion de bots dans chaque fold. Le nombre de composantes ACP n'est plus fixé manuellement : il devient un hyperparamètre de la grille, avec les seuils `[0.75, 0.80, 0.85, 0.90, 0.95, "mle"]`. Le noyau `sigmoid`, instable dans cette configuration, a été retiré de la grille.
+
+#figure(
+  image("img/Score_F1_SVM.png", width:90%),
+  caption: [Résultat du GridSeachCV]
+)
+
+Le meilleur pipeline retient finalement `n_components = "mle"`, soit 30 composantes sur 31, un noyau `poly`, `C = 3.333`, et un F1 moyen de $0.7489$ en validation croisée.
+
+=== Résultats
+
+Le gain par rapport au premier jet reste modéré, mais il est plus fiable parce qu'il n'est plus gonflé par la fuite de données. Sur le test set, le pipeline corrigé obtient une accuracy de $0.929$, une precision de $0.833$, un recall de $0.714$ et un F1-score de $0.769$.
+
+#table(
+  columns: (auto, auto, auto, auto, auto),
+  table.header([Modèle], [Accuracy], [Precision], [Recall], [F1 test]),
+  [Premier jet], [0,881], [0,625], [0,714], [0,667],
+  [Pipeline corrigé (poly, mle)], [*0,929*], [*0,833*], [0,714], [*0,769*],
+)
+
+Ce gain vient presque uniquement de la precision, qui passe de $0.625$ à $0.833$ : le modèle génère seulement 2 faux positifs au lieu de 6, sans détecter plus de bots. Le recall reste à $0.714$ dans les deux cas, soit 10 bots détectés sur 14.
+
+#figure(
+  image("img/confusion_and_PCA_final.png", width: 90%),
+  caption: [Matrice de confusion finale et meilleur F1 CV par seuil de variance PCA]
+)
+
+La courbe ROC complète cette lecture en évaluant le modèle sur tous les seuils de décision possibles. Le pipeline corrigé obtient une AUC de $0.870$, ce qui confirme une discrimination correcte, mais moins nette que ce que le premier jet laissait penser.
+
+#figure(
+  image("img/svm-roc-curve.png", width: 67%),
+  caption: [Courbe ROC du pipeline SVM corrigé, AUC = 0,870]
+)
+
+Le SVM corrigé reste donc en retrait par rapport au Random Forest pour notre objectif principal : le RF retrouve 13 bots sur 14, contre 10 sur 14 pour le SVM. En revanche, le SVM corrigé est plus conservateur et limite mieux les faux positifs. Il peut donc être intéressant si l'action associée à une détection est coûteuse, par exemple une suspension de compte, mais le Random Forest reste plus adapté si l'on priorise la détection exhaustive.
+
 
 #pagebreak()
 
@@ -643,19 +701,18 @@ Le cluster 1 est le plus suspect, avec environ la moitié de bots, mais il ne r�
 
 == Bilan des modèles
 
-Les modèles donnent des résultats assez cohérents avec ce qu'on pouvait attendre. Le Random Forest est le plus efficace quand on veut prédire directement le label bot/humain, car il apprend la frontière à partir de nos annotations. Les méthodes non-supervisées, elles, sont plus exploratoires : elles font ressortir des zones de profils suspects, mais elles ne remplacent pas un modèle supervisé pour prendre une décision profil par profil.
+Les modèles donnent des résultats assez cohérents avec ce qu'on pouvait attendre. Le Random Forest est le plus efficace quand on veut prédire directement le label bot/humain, car il apprend la frontière à partir de nos annotations. Le SVM corrigé fournit une comparaison supervisée intéressante : il réduit fortement les faux positifs, mais reste moins bon que le RF pour retrouver tous les bots. Les méthodes non-supervisées, elles, sont plus exploratoires : elles font ressortir des zones de profils suspects, mais elles ne remplacent pas un modèle supervisé pour prendre une décision profil par profil.
 
 #table(
   columns: (auto, auto, auto, auto, auto),
   table.header([Méthode], [Accuracy], [Precision], [Recall], [F1]),
   [Random Forest], [0,917], [0,684], [0,929], [0,788],
+  [SVM corrigé], [0,929], [0,833], [0,714], [0,769],
   [MiniBatch K-means], [0,750], [0,394], [0,847], [0,537],
   [Spectral clustering], [0,831], [0,508], [0,444], [0,474],
 )
 
-#text(fill: red)[À compléter : ajouter la ligne SVM dans ce tableau.]
-
-Le Random Forest a surtout l'avantage d'un recall élevé : il retrouve 13 bots sur 14 dans le test set. C'est le comportement que l'on préfère dans notre cas d'usage, parce qu'un faux positif humain peut être revérifié, alors qu'un bot qui passe sous le radar reste actif. La precision plus faible veut simplement dire que le modèle est un peu agressif dans sa détection.
+Le Random Forest a surtout l'avantage d'un recall élevé : il retrouve 13 bots sur 14 dans le test set. C'est le comportement que l'on préfère dans notre cas d'usage, parce qu'un faux positif humain peut être revérifié, alors qu'un bot qui passe sous le radar reste actif. Le SVM corrigé est plus prudent : il détecte 10 bots sur 14, mais avec seulement 2 faux positifs. Son AUC de $0.870$ confirme une discrimination correcte, sans renverser l'avantage opérationnel du Random Forest.
 
 == Random Forest contre clustering
 
@@ -679,12 +736,12 @@ Une idée complémentaire que nous avons eu est celle d'exploiter la principale 
 
 L'idée qui en découle est de calculer des embeddings vectoriels des tweets, et ensuite de mesurer la distance entre ces embeddings pour chaque utilisateur. Cela permettrait de quantifier la répétition sémantique : un bot répète souvent les mêmes idées ou reste dans un espace thématique étroit, tandis qu'un humain varie davantage. Cette addition en tant que composante principale de notre analyse est très intéressante, mais elle nécessite un temps de développement et de calcul important si on veut explorer les 4.5 millions de tweets. Il ne nous est donc pas possible de le faire sérieusement dans le cadre de ce projet.
 
-Cependant, pour aller un peu plus loin, nous avons lancé un _Proof Of Concepot_ avec l'aide de #emph("Codex") (harness et modèle d'OpenAI) séparé sur les 420 profils labellisés. L'idée était de créer des embeddings des tweets avec `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, puis de calculer des métriques de répétition sémantique par utilisateur.
+Cependant, pour aller un peu plus loin, nous avons lancé un _Proof Of Concept_ avec l'aide de #emph("Codex") (harness et modèle d'OpenAI) séparé sur les 420 profils labellisés. L'idée était de créer des embeddings des tweets avec `sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2`, puis de calculer des métriques de répétition sémantique par utilisateur.
 
 Ce POC a été gardé à part dans `src/ml/semantic_poc/`, justement pour ne pas le mélanger avec le coeur du rapport. Sur le même split que le Random Forest, l'ajout de ces features améliore légèrement les scores : accuracy de 0,917 à 0,929, recall de 0,929 à 1,000, et F1 de 0,788 à 0,824.
 
 #figure(
-  image("img/semantic_poc/semantic_rf_metrics.png", width: 90%),
+  image("img/semantic_poc/semantic_rf_metrics.png", width: 80%),
   caption: [Comparaison Random Forest sans et avec les features sémantiques du POC]
 )
 
@@ -711,12 +768,13 @@ La suite logique serait d'élargir l'annotation, puis de tester plus sérieuseme
 
 = Bibliographie
 
-#text(fill: red)[COMPLÉTER : mettre en forme selon le style APA ou IEEE.]
-
 - Benevenuto, F., Magno, G., Rodrigues, T., & Almeida, V. (2010). Detecting spammers on Twitter. *Proceedings of the 7th Annual Collaboration, Electronic Messaging, Anti-Abuse and Spam Conference (CEAS)*.
-- Chu, Z., Gianvecchio, S., Wang, H., & Jajodia, S. (2012). Detecting automation of Twitter accounts: Are you a human, bot, or cyborg? *IEEE Transactions on Dependable and Secure Computing*, 9(6), 811-824.
-- Ferrara, E., Varol, O., Davis, C., Menczer, F., & Flammini, A. (2016). The rise of social bots. *Communications of the ACM*, 59(7), 96-104.
+- Breiman, L. (2001). Random forests. *Machine Learning, 45*(1), 5-32.
+- Chu, Z., Gianvecchio, S., Wang, H., & Jajodia, S. (2012). Detecting automation of Twitter accounts: Are you a human, bot, or cyborg? *IEEE Transactions on Dependable and Secure Computing, 9*(6), 811-824.
+- Cortes, C., & Vapnik, V. (1995). Support-vector networks. *Machine Learning, 20*(3), 273-297.
+- Ferrara, E., Varol, O., Davis, C., Menczer, F., & Flammini, A. (2016). The rise of social bots. *Communications of the ACM, 59*(7), 96-104.
+- Lloyd, S. (1982). Least squares quantization in PCM. *IEEE Transactions on Information Theory, 28*(2), 129-137.
+- Ng, A. Y., Jordan, M. I., & Weiss, Y. (2002). On spectral clustering: Analysis and an algorithm. *Advances in Neural Information Processing Systems, 14*.
+- Pedregosa, F., Varoquaux, G., Gramfort, A., Michel, V., Thirion, B., Grisel, O., Blondel, M., Prettenhofer, P., Weiss, R., Dubourg, V., Vanderplas, J., Passos, A., Cournapeau, D., Brucher, M., Perrot, M., & Duchesnay, E. (2011). Scikit-learn: Machine learning in Python. *Journal of Machine Learning Research, 12*, 2825-2830.
 - Perez, C., Lemercier, M., Birregah, B., & Corpel, A. (2011). SPOT 1.0: Scoring Suspicious Profiles On Twitter. *Proceedings of the 2011 International Conference on Advances in Social Networks Analysis and Mining (ASONAM)*, 377-381.
 - Varol, O., Ferrara, E., Davis, C. A., Menczer, F., & Flammini, A. (2017). Online human-bot interactions: Detection, estimation, and characterization. *Proceedings of the 11th International AAAI Conference on Web and Social Media (ICWSM)*, 280-289.
-
-#text(fill: red)[AJOUTER D'AUTRES RÉFÉRENCES PERTINENTES UTILISÉES DANS LE RAPPORT.]
